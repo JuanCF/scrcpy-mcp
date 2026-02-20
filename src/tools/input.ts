@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { execAdbShell, resolveSerial } from "../utils/adb.js";
+import { execAdbShell, resolveSerial, getDeviceProperty } from "../utils/adb.js";
 
 const KEYCODE_MAP: Record<string, number> = {
   HOME: 3,
@@ -128,7 +128,7 @@ export function registerInputTools(server: McpServer) {
 
   server.tool(
     "drag_drop",
-    "Perform a drag and drop gesture from one point to another",
+    "Perform a drag and drop gesture from one point to another. Uses input draganddrop on Android 8.0+ (API 26), falls back to swipe on older versions.",
     {
       startX: z.number().int().nonnegative().describe("Start X coordinate"),
       startY: z.number().int().nonnegative().describe("Start Y coordinate"),
@@ -139,9 +139,21 @@ export function registerInputTools(server: McpServer) {
     },
     async ({ startX, startY, endX, endY, duration, serial }) => {
       const s = await resolveSerial(serial);
-      await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`);
+      
+      const sdkStr = await getDeviceProperty(s, "ro.build.version.sdk");
+      const sdkLevel = parseInt(sdkStr, 10);
+      
+      if (!isNaN(sdkLevel) && sdkLevel >= 26) {
+        await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`);
+        return {
+          content: [{ type: "text", text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms` }],
+        };
+      }
+      
+      console.error(`[drag_drop] SDK ${sdkLevel} < 26, using swipe fallback`);
+      await execAdbShell(s, `input swipe ${startX} ${startY} ${endX} ${endY} ${duration}`);
       return {
-        content: [{ type: "text", text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms` }],
+        content: [{ type: "text", text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)` }],
       };
     }
   );
@@ -195,8 +207,8 @@ export function registerInputTools(server: McpServer) {
       const duration = 300;
       const distance = 100;
       
-      const endX = Math.round(x + dx * distance);
-      const endY = Math.round(y + dy * distance);
+      const endX = Math.max(0, Math.round(x + dx * distance));
+      const endY = Math.max(0, Math.round(y + dy * distance));
       
       await execAdbShell(s, `input swipe ${x} ${y} ${endX} ${endY} ${duration}`);
       return {

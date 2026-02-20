@@ -3,7 +3,12 @@ import { z } from "zod";
 import { execAdb, execAdbRaw, resolveSerial } from "../utils/adb.js";
 import { spawn, ChildProcess } from "child_process";
 
-const recordingProcesses: Map<string, ChildProcess> = new Map();
+interface RecordingSession {
+  proc: ChildProcess;
+  remotePath: string;
+}
+
+const recordingSessions: Map<string, RecordingSession> = new Map();
 
 export function registerVisionTools(server: McpServer) {
   server.tool(
@@ -46,7 +51,7 @@ export function registerVisionTools(server: McpServer) {
     async ({ serial, remotePath, duration }) => {
       const s = await resolveSerial(serial);
       
-      if (recordingProcesses.has(s)) {
+      if (recordingSessions.has(s)) {
         return {
           content: [
             {
@@ -63,10 +68,10 @@ export function registerVisionTools(server: McpServer) {
       }
 
       const proc = spawn("adb", args);
-      recordingProcesses.set(s, proc);
+      recordingSessions.set(s, { proc, remotePath });
 
       proc.on("close", () => {
-        recordingProcesses.delete(s);
+        recordingSessions.delete(s);
       });
 
       proc.stderr?.on("data", (data) => {
@@ -101,10 +106,9 @@ export function registerVisionTools(server: McpServer) {
     },
     async ({ serial, pullToHost, localPath }) => {
       const s = await resolveSerial(serial);
-      const remotePath = "/sdcard/scrcpy-mcp-recording.mp4";
       
-      const proc = recordingProcesses.get(s);
-      if (!proc) {
+      const session = recordingSessions.get(s);
+      if (!session) {
         return {
           content: [
             {
@@ -115,8 +119,9 @@ export function registerVisionTools(server: McpServer) {
         };
       }
 
+      const { proc, remotePath } = session;
       proc.kill("SIGINT");
-      recordingProcesses.delete(s);
+      recordingSessions.delete(s);
 
       await new Promise((resolve) => setTimeout(resolve, 500));
 
