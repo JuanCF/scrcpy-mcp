@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { execAdb, execAdbRaw, resolveSerial } from "../utils/adb.js";
+import { execAdb, execAdbRaw, resolveSerial, ADB_PATH } from "../utils/adb.js";
 import { spawn, ChildProcess } from "child_process";
 
 interface RecordingSession {
@@ -62,12 +62,13 @@ export function registerVisionTools(server: McpServer) {
         };
       }
 
-      const args = ["-s", s, "shell", "screenrecord", remotePath];
+      const args = ["-s", s, "shell", "screenrecord"];
       if (duration) {
         args.push("--time-limit", String(duration));
       }
+      args.push(remotePath);
 
-      const proc = spawn("adb", args);
+      const proc = spawn(ADB_PATH, args);
       recordingSessions.set(s, { proc, remotePath });
 
       proc.on("close", () => {
@@ -120,10 +121,14 @@ export function registerVisionTools(server: McpServer) {
       }
 
       const { proc, remotePath } = session;
-      proc.kill("SIGINT");
       recordingSessions.delete(s);
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      
+      proc.kill("SIGINT");
+      
+      await new Promise<void>((resolve) => {
+        proc.once("close", () => resolve());
+        setTimeout(() => resolve(), 2000);
+      });
 
       if (pullToHost) {
         const targetPath = localPath || `./recording-${s}.mp4`;

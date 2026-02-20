@@ -3,7 +3,7 @@ import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
-const ADB_PATH = process.env.ADB_PATH || "adb";
+export const ADB_PATH = process.env.ADB_PATH || "adb";
 const DEFAULT_TIMEOUT = 30000;
 
 export interface ExecResult {
