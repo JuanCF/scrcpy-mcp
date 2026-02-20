@@ -80,21 +80,21 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.1 scrcpy Utility Layer Foundation (`src/utils/scrcpy.ts`)
 
-- [ ] 2.1.1 Define `ScrcpySession` class with properties: serial, controlSocket, videoProcess, frameBuffer, screenSize
-- [ ] 2.1.2 Implement `findScrcpyServer()` - locate scrcpy-server binary (SCRCPY_SERVER_PATH or auto-detect)
-- [ ] 2.1.3 Implement `pushScrcpyServer(serial)` - adb push scrcpy-server.jar to device
-- [ ] 2.1.4 Implement `setupPortForwarding(serial, port)` - adb forward tcp:port localabstract:scrcpy
-- [ ] 2.1.5 Implement `startScrcpyServer(serial, options)` - adb shell CLASSPATH... app_process
+- [x] 2.1.1 Define `ScrcpySession` class with properties: serial, controlSocket, videoProcess, frameBuffer, screenSize
+- [x] 2.1.2 Implement `findScrcpyServer()` - locate scrcpy-server binary (SCRCPY_SERVER_PATH or auto-detect)
+- [x] 2.1.3 Implement `pushScrcpyServer(serial)` - adb push scrcpy-server.jar to device
+- [x] 2.1.4 Implement `setupPortForwarding(serial, port)` - adb forward tcp:port localabstract:scrcpy
+- [x] 2.1.5 Implement `startScrcpyServer(serial, options)` - adb shell CLASSPATH... app_process
 
 ### 2.2 scrcpy Control Protocol
 
-- [ ] 2.2.1 Define control message type constants (INJECT_KEYCODE=0, INJECT_TEXT=1, etc.)
-- [ ] 2.2.2 Implement `serializeInjectKeycode(action, keycode, repeat, metaState)` - 14 bytes
-- [ ] 2.2.3 Implement `serializeInjectText(text)` - 5+len bytes, max 300 chars
-- [ ] 2.2.4 Implement `serializeInjectTouchEvent(action, pointerId, x, y, width, height, pressure, buttons)` - 32 bytes
-- [ ] 2.2.5 Implement `serializeInjectScrollEvent(x, y, width, height, hscroll, vscroll, buttons)` - 21 bytes
-- [ ] 2.2.6 Implement `serializeSetClipboard(sequence, paste, text)` - 14+len bytes
-- [ ] 2.2.7 Implement `serializeSimpleMessage(type)` - for EXPAND_NOTIFICATION_PANEL, COLLAPSE_PANELS, etc.
+- [x] 2.2.1 Define control message type constants (INJECT_KEYCODE=0, INJECT_TEXT=1, etc.)
+- [x] 2.2.2 Implement `serializeInjectKeycode(action, keycode, repeat, metaState)` - 14 bytes
+- [x] 2.2.3 Implement `serializeInjectText(text)` - 5+len bytes, max 300 chars
+- [x] 2.2.4 Implement `serializeInjectTouchEvent(action, pointerId, x, y, width, height, pressure, buttons)` - 32 bytes
+- [x] 2.2.5 Implement `serializeInjectScrollEvent(x, y, width, height, hscroll, vscroll, buttons)` - 21 bytes
+- [x] 2.2.6 Implement `serializeSetClipboard(sequence, paste, text)` - 14+len bytes
+- [x] 2.2.7 Implement `serializeSimpleMessage(type)` - for EXPAND_NOTIFICATION_PANEL, COLLAPSE_PANELS, etc.
 
 ### 2.3 scrcpy Video Stream
 

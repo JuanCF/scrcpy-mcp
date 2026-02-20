@@ -8,7 +8,180 @@ import {
   SCRCPY_SERVER_PORT,
   SCRCPY_SERVER_PATH_LOCAL,
   SCRCPY_SERVER_VERSION,
+  CONTROL_MSG_TYPE_INJECT_KEYCODE,
+  CONTROL_MSG_TYPE_INJECT_TEXT,
+  CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT,
+  CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT,
+  CONTROL_MSG_TYPE_SET_DISPLAY_POWER,
+  CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL,
+  CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL,
+  CONTROL_MSG_TYPE_COLLAPSE_PANELS,
+  CONTROL_MSG_TYPE_GET_CLIPBOARD,
+  CONTROL_MSG_TYPE_SET_CLIPBOARD,
+  CONTROL_MSG_TYPE_ROTATE_DEVICE,
+  DISPLAY_POWER_MODE_OFF,
+  DISPLAY_POWER_MODE_ON,
+  TEXT_MAX_LENGTH,
 } from "./constants.js"
+
+export {
+  ACTION_DOWN,
+  ACTION_UP,
+  ACTION_MOVE,
+  KEYCODE_HOME,
+  KEYCODE_BACK,
+  KEYCODE_MENU,
+  KEYCODE_ENTER,
+  KEYCODE_VOLUME_UP,
+  KEYCODE_VOLUME_DOWN,
+  KEYCODE_POWER,
+} from "./constants.js"
+
+export function serializeInjectKeycode(
+  action: number,
+  keycode: number,
+  repeat = 0,
+  metaState = 0
+): Buffer {
+  const buffer = Buffer.alloc(14)
+  let offset = 0
+  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_KEYCODE, offset++)
+  buffer.writeUInt8(action, offset++)
+  buffer.writeInt32BE(keycode, offset)
+  offset += 4
+  buffer.writeInt32BE(metaState, offset)
+  offset += 4
+  buffer.writeInt32BE(repeat, offset)
+  return buffer
+}
+
+export function serializeInjectText(text: string): Buffer {
+  const textBytes = Buffer.from(text, "utf8")
+  if (textBytes.length > TEXT_MAX_LENGTH) {
+    throw new Error(`Text too long: ${textBytes.length} bytes (max ${TEXT_MAX_LENGTH})`)
+  }
+  const buffer = Buffer.alloc(5 + textBytes.length)
+  let offset = 0
+  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_TEXT, offset++)
+  buffer.writeUInt32BE(textBytes.length, offset)
+  offset += 4
+  textBytes.copy(buffer, offset)
+  return buffer
+}
+
+export function serializeInjectTouchEvent(
+  action: number,
+  pointerId: bigint,
+  x: number,
+  y: number,
+  screenWidth: number,
+  screenHeight: number,
+  pressure: number,
+  buttons = 0
+): Buffer {
+  const buffer = Buffer.alloc(32)
+  let offset = 0
+  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT, offset++)
+  buffer.writeUInt8(action, offset++)
+  buffer.writeBigInt64BE(pointerId, offset)
+  offset += 8
+  buffer.writeInt32BE(x, offset)
+  offset += 4
+  buffer.writeInt32BE(y, offset)
+  offset += 4
+  buffer.writeUInt16BE(screenWidth, offset)
+  offset += 2
+  buffer.writeUInt16BE(screenHeight, offset)
+  offset += 2
+  buffer.writeFloatBE(pressure, offset)
+  offset += 4
+  buffer.writeUInt32BE(buttons, offset)
+  return buffer
+}
+
+export function serializeInjectScrollEvent(
+  x: number,
+  y: number,
+  screenWidth: number,
+  screenHeight: number,
+  hScroll: number,
+  vScroll: number,
+  buttons = 0
+): Buffer {
+  const buffer = Buffer.alloc(21)
+  let offset = 0
+  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT, offset++)
+  buffer.writeInt32BE(x, offset)
+  offset += 4
+  buffer.writeInt32BE(y, offset)
+  offset += 4
+  buffer.writeUInt16BE(screenWidth, offset)
+  offset += 2
+  buffer.writeUInt16BE(screenHeight, offset)
+  offset += 2
+  buffer.writeFloatBE(hScroll, offset)
+  offset += 4
+  buffer.writeFloatBE(vScroll, offset)
+  offset += 4
+  buffer.writeUInt32BE(buttons, offset)
+  return buffer
+}
+
+export function serializeSetDisplayPower(on: boolean): Buffer {
+  const buffer = Buffer.alloc(2)
+  buffer.writeUInt8(CONTROL_MSG_TYPE_SET_DISPLAY_POWER, 0)
+  buffer.writeUInt8(on ? DISPLAY_POWER_MODE_ON : DISPLAY_POWER_MODE_OFF, 1)
+  return buffer
+}
+
+export function serializeExpandNotificationPanel(): Buffer {
+  return Buffer.from([CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL])
+}
+
+export function serializeExpandSettingsPanel(): Buffer {
+  return Buffer.from([CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL])
+}
+
+export function serializeCollapsePanels(): Buffer {
+  return Buffer.from([CONTROL_MSG_TYPE_COLLAPSE_PANELS])
+}
+
+export function serializeGetClipboard(sequence: number): Buffer {
+  const buffer = Buffer.alloc(5)
+  buffer.writeUInt8(CONTROL_MSG_TYPE_GET_CLIPBOARD, 0)
+  buffer.writeUInt32BE(sequence, 1)
+  return buffer
+}
+
+export function serializeSetClipboard(
+  sequence: number,
+  text: string,
+  paste = false
+): Buffer {
+  const textBytes = Buffer.from(text, "utf8")
+  const buffer = Buffer.alloc(14 + textBytes.length)
+  let offset = 0
+  buffer.writeUInt8(CONTROL_MSG_TYPE_SET_CLIPBOARD, offset++)
+  buffer.writeUInt32BE(sequence, offset)
+  offset += 4
+  buffer.writeUInt8(paste ? 1 : 0, offset++)
+  buffer.writeUInt32BE(textBytes.length, offset)
+  offset += 4
+  textBytes.copy(buffer, offset)
+  return buffer
+}
+
+export function serializeRotateDevice(): Buffer {
+  return Buffer.from([CONTROL_MSG_TYPE_ROTATE_DEVICE])
+}
+
+export function sendControlMessage(serial: string, message: Buffer): void {
+  const session = getSession(serial)
+  if (!session || !session.controlSocket || session.controlSocket.destroyed) {
+    throw new Error(`No active scrcpy session for device ${serial}`)
+  }
+  session.controlSocket.write(message)
+}
 
 export interface ScrcpySessionOptions {
   maxSize?: number
