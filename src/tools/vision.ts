@@ -11,11 +11,13 @@ interface RecordingSession {
 const recordingSessions: Map<string, RecordingSession> = new Map();
 
 export function registerVisionTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "screenshot",
-    "Take a screenshot of the Android device screen. Returns the image as base64.",
     {
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Take a screenshot of the Android device screen. Returns the image as base64.",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ serial }) => {
       const s = await resolveSerial(serial);
@@ -33,20 +35,22 @@ export function registerVisionTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "screen_record_start",
-    "Start recording the screen. Recording continues until screen_record_stop is called.",
     {
-      serial: z.string().optional().describe("Device serial number"),
-      remotePath: z
-        .string()
-        .optional()
-        .default("/sdcard/scrcpy-mcp-recording.mp4")
-        .describe("Path on device to save recording"),
-      duration: z
-        .number()
-        .optional()
-        .describe("Max recording duration in seconds (optional, device limit usually 180s)"),
+      description: "Start recording the screen. Recording continues until screen_record_stop is called.",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+        remotePath: z
+          .string()
+          .optional()
+          .default("/sdcard/scrcpy-mcp-recording.mp4")
+          .describe("Path on device to save recording"),
+        duration: z
+          .number()
+          .optional()
+          .describe("Max recording duration in seconds (optional, device limit usually 180s)"),
+      },
     },
     async ({ serial, remotePath, duration }) => {
       const s = await resolveSerial(serial);
@@ -90,20 +94,22 @@ export function registerVisionTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "screen_record_stop",
-    "Stop screen recording and optionally pull the file to the host.",
     {
-      serial: z.string().optional().describe("Device serial number"),
-      pullToHost: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Pull the recording to the host machine"),
-      localPath: z
-        .string()
-        .optional()
-        .describe("Local path to save recording (only if pullToHost is true)"),
+      description: "Stop screen recording and optionally pull the file to the host.",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+        pullToHost: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Pull the recording to the host machine"),
+        localPath: z
+          .string()
+          .optional()
+          .describe("Local path to save recording (only if pullToHost is true)"),
+      },
     },
     async ({ serial, pullToHost, localPath }) => {
       const s = await resolveSerial(serial);
