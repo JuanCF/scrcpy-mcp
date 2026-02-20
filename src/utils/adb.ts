@@ -1,10 +1,8 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { execFile } from "child_process"
+import { promisify } from "util"
+import { ADB_PATH, DEFAULT_TIMEOUT } from "./constants.js"
 
-const execFileAsync = promisify(execFile);
-
-export const ADB_PATH = process.env.ADB_PATH || "adb";
-const DEFAULT_TIMEOUT = 30000;
+const execFileAsync = promisify(execFile)
 
 export interface ExecResult {
   stdout: string;

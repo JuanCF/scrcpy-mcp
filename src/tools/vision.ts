@@ -1,7 +1,8 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { execAdb, execAdbRaw, resolveSerial, ADB_PATH } from "../utils/adb.js";
-import { spawn, ChildProcess } from "child_process";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { z } from "zod"
+import { execAdb, execAdbRaw, resolveSerial } from "../utils/adb.js"
+import { ADB_PATH } from "../utils/constants.js"
+import { spawn, ChildProcess } from "child_process"
 
 interface RecordingSession {
   proc: ChildProcess;

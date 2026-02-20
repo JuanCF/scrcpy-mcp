@@ -2,10 +2,13 @@ import { spawn, ChildProcess } from "child_process"
 import * as net from "net"
 import * as path from "path"
 import * as fs from "fs"
-import { execAdb, execAdbShell, resolveSerial, ADB_PATH } from "./adb.js"
-
-const SCRCPY_SERVER_PORT = 27183
-const SCRCPY_SERVER_PATH_LOCAL = "/data/local/tmp/scrcpy-server.jar"
+import { execAdb, execAdbShell, resolveSerial } from "./adb.js"
+import {
+  ADB_PATH,
+  SCRCPY_SERVER_PORT,
+  SCRCPY_SERVER_PATH_LOCAL,
+  SCRCPY_SERVER_VERSION,
+} from "./constants.js"
 
 export interface ScrcpySessionOptions {
   maxSize?: number
@@ -39,17 +42,18 @@ export function findScrcpyServer(): string | null {
   }
 
   const homeDir = process.env.HOME || process.env.USERPROFILE
-  if (homeDir) {
-    const commonPaths = [
-      path.join(homeDir, ".local", "share", "scrcpy", "scrcpy-server"),
-      "/usr/local/share/scrcpy/scrcpy-server",
-      "/usr/share/scrcpy/scrcpy-server",
-    ]
+  const commonPaths: string[] = [
+    "/usr/local/share/scrcpy/scrcpy-server",
+    "/usr/share/scrcpy/scrcpy-server",
+  ]
 
-    for (const p of commonPaths) {
-      if (fs.existsSync(p)) {
-        return p
-      }
+  if (homeDir) {
+    commonPaths.unshift(path.join(homeDir, ".local", "share", "scrcpy", "scrcpy-server"))
+  }
+
+  for (const p of commonPaths) {
+    if (fs.existsSync(p)) {
+      return p
     }
   }
 
@@ -88,7 +92,7 @@ export async function startScrcpyServer(
     "app_process",
     "/",
     "com.genymobile.scrcpy.Server",
-    "2.7",
+    SCRCPY_SERVER_VERSION,
     `log_level=debug`,
     `max_size=${maxSize}`,
     `max_fps=${maxFps}`,
@@ -139,6 +143,8 @@ const connectToServer = async (port: number, timeout = 10000): Promise<net.Socke
 const receiveDeviceMeta = async (socket: net.Socket, port: number): Promise<{ width: number; height: number }> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      socket.off("data", onData)
+      socket.off("error", onError)
       reject(new Error(`Timeout waiting for device metadata on port ${port}`))
     }, 5000)
 
@@ -150,6 +156,7 @@ const receiveDeviceMeta = async (socket: net.Socket, port: number): Promise<{ wi
       if (buffer.length >= 68) {
         clearTimeout(timer)
         socket.off("data", onData)
+        socket.off("error", onError)
 
         const width = readUint16BE(buffer, 5)
         const height = readUint16BE(buffer, 7)
@@ -158,10 +165,15 @@ const receiveDeviceMeta = async (socket: net.Socket, port: number): Promise<{ wi
       }
     }
 
-    socket.on("data", onData)
-    socket.on("error", (err) => {
+    const onError = (err: Error) => {
+      clearTimeout(timer)
+      socket.off("data", onData)
+      socket.off("error", onError)
       reject(new Error(`Socket error while receiving device metadata on port ${port}`, { cause: err }))
-    })
+    }
+
+    socket.on("data", onData)
+    socket.on("error", onError)
   })
 
 export async function startSession(
@@ -211,28 +223,43 @@ export async function startSession(
     )
   }
 
-  const screenSize = await receiveDeviceMeta(socket, port)
+  let session: ScrcpySession | null = null
+  try {
+    const screenSize = await receiveDeviceMeta(socket, port)
 
-  const session: ScrcpySession = {
-    serial: s,
-    controlSocket: socket,
-    videoProcess: null,
-    frameBuffer: null,
-    screenSize,
+    session = {
+      serial: s,
+      controlSocket: socket,
+      videoProcess: null,
+      frameBuffer: null,
+      screenSize,
+    }
+
+    sessions.set(s, session)
+
+    socket.on("close", () => {
+      session!.controlSocket = null
+    })
+
+    socket.on("error", (err) => {
+      console.error(`[scrcpy] Control socket error for ${s}:`, err.message)
+      session!.controlSocket = null
+    })
+
+    return session
+  } catch (err) {
+    if (session) {
+      sessions.delete(s)
+    }
+    socket.destroy()
+    try {
+      await execAdbShell(s, `pkill -f scrcpy-server`)
+    } catch {
+      // Ignore if process doesn't exist
+    }
+    await removePortForwarding(s, port)
+    throw err
   }
-
-  sessions.set(s, session)
-
-  socket.on("close", () => {
-    session.controlSocket = null
-  })
-
-  socket.on("error", (err) => {
-    console.error(`[scrcpy] Control socket error for ${s}:`, err.message)
-    session.controlSocket = null
-  })
-
-  return session
 }
 
 export async function stopSession(serial: string): Promise<void> {
