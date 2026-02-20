@@ -173,10 +173,17 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ address }) => {
-      await execAdb(["disconnect", address]);
-      return {
-        content: [{ type: "text", text: `Disconnected from ${address}` }],
-      };
+      try {
+        await execAdb(["disconnect", address]);
+        return {
+          content: [{ type: "text", text: `Disconnected from ${address}` }],
+        };
+      } catch (error) {
+        const err = error as Error;
+        return {
+          content: [{ type: "text", text: `Failed to disconnect from ${address}: ${err.message}` }],
+        };
+      }
     }
   );
 }
