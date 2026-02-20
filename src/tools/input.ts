@@ -195,8 +195,26 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ keycode, serial }) => {
+      let code: number;
+      try {
+        code = resolveKeycode(keycode);
+      } catch (error) {
+        const err = error as Error;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: true,
+                message: err.message,
+                hint: "Use a known keycode name (HOME, BACK, ENTER, VOLUME_UP, etc.) or a numeric value.",
+              }),
+            },
+          ],
+        };
+      }
+      
       const s = await resolveSerial(serial);
-      const code = resolveKeycode(keycode);
       await execAdbShell(s, `input keyevent ${code}`);
       return {
         content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }],

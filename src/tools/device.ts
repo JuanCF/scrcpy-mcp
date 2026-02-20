@@ -117,30 +117,49 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ port, serial }) => {
-      const s = await resolveSerial(serial);
+      try {
+        const s = await resolveSerial(serial);
 
-      await execAdb(["-s", s, "tcpip", String(port)], 10000);
+        await execAdb(["-s", s, "tcpip", String(port)], 10000);
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const ipOutput = await execAdbShell(s, "ip route");
-      const ipMatch = ipOutput.match(/src\s+(\d+\.\d+\.\d+\.\d+)/);
-      if (!ipMatch) {
-        throw new Error("Could not determine device IP address");
+        const ipOutput = await execAdbShell(s, "ip route");
+        const ipMatch = ipOutput.match(/src\s+(\d+\.\d+\.\d+\.\d+)/);
+        if (!ipMatch) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ error: true, message: "Could not determine device IP address. Ensure the device is connected to WiFi." }),
+              },
+            ],
+          };
+        }
+        const ip = ipMatch[1];
+        const address = `${ip}:${port}`;
+
+        await execAdb(["connect", address], 10000);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ address, message: `Connected to ${address}` }),
+            },
+          ],
+        };
+      } catch (error) {
+        const err = error as Error;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Failed to connect via WiFi: ${err.message}` }),
+            },
+          ],
+        };
       }
-      const ip = ipMatch[1];
-      const address = `${ip}:${port}`;
-
-      await execAdb(["connect", address], 10000);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ address, message: `Connected to ${address}` }),
-          },
-        ],
-      };
     }
   );
 
