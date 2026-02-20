@@ -129,12 +129,14 @@ throw new Error(
 ### MCP Tool Registration Pattern
 
 ```typescript
-server.tool(
+server.registerTool(
   "tool_name",
-  "Description of what the tool does",
   {
-    param: z.string().optional().describe("Parameter description"),
-    required: z.number().describe("Required parameter"),
+    description: "Description of what the tool does",
+    inputSchema: {
+      param: z.string().optional().describe("Parameter description"),
+      required: z.number().describe("Required parameter"),
+    },
   },
   async ({ param, required }) => {
     const result = await doWork(param, required);

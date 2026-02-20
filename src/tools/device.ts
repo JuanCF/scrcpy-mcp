@@ -10,10 +10,12 @@ import {
 } from "../utils/adb.js";
 
 export function registerDeviceTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "device_list",
-    "List all connected Android devices with their serial numbers, state, and model",
-    {},
+    {
+      description: "List all connected Android devices with their serial numbers, state, and model",
+      inputSchema: {},
+    },
     async () => {
       const devices = await getDevices();
       return {
@@ -22,16 +24,16 @@ export function registerDeviceTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "device_info",
-    "Get detailed info about a device: model, Android version, screen size, SDK level, battery level",
     {
-      serial: z
-        .string()
-        .optional()
-        .describe(
-          "Device serial number. If omitted, uses the only connected device."
-        ),
+      description: "Get detailed info about a device: model, Android version, screen size, SDK level, battery level",
+      inputSchema: {
+        serial: z
+          .string()
+          .optional()
+          .describe("Device serial number. If omitted, uses the only connected device."),
+      },
     },
     async ({ serial }) => {
       const s = await resolveSerial(serial);
@@ -67,11 +69,13 @@ export function registerDeviceTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "screen_on",
-    "Wake the device screen (turn screen on)",
     {
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Wake the device screen (turn screen on)",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ serial }) => {
       const s = await resolveSerial(serial);
@@ -82,11 +86,13 @@ export function registerDeviceTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "screen_off",
-    "Turn the device screen off",
     {
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Turn the device screen off",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ serial }) => {
       const s = await resolveSerial(serial);
@@ -97,16 +103,18 @@ export function registerDeviceTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "connect_wifi",
-    "Enable WiFi ADB and connect to the device wirelessly. Returns the connection address.",
     {
-      port: z
-        .number()
-        .optional()
-        .default(5555)
-        .describe("TCP port for ADB connection (default: 5555)"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Enable WiFi ADB and connect to the device wirelessly. Returns the connection address.",
+      inputSchema: {
+        port: z
+          .number()
+          .optional()
+          .default(5555)
+          .describe("TCP port for ADB connection (default: 5555)"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ port, serial }) => {
       const s = await resolveSerial(serial);
@@ -136,11 +144,13 @@ export function registerDeviceTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "disconnect_wifi",
-    "Disconnect from a wireless ADB device",
     {
-      address: z.string().describe("Device address (e.g., 192.168.1.100:5555)"),
+      description: "Disconnect from a wireless ADB device",
+      inputSchema: {
+        address: z.string().describe("Device address (e.g., 192.168.1.100:5555)"),
+      },
     },
     async ({ address }) => {
       await execAdb(["disconnect", address]);

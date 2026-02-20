@@ -71,13 +71,15 @@ function resolveKeycode(keycode: string | number): number {
 }
 
 export function registerInputTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     "tap",
-    "Tap at the specified screen coordinates",
     {
-      x: z.number().int().nonnegative().describe("X coordinate"),
-      y: z.number().int().nonnegative().describe("Y coordinate"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Tap at the specified screen coordinates",
+      inputSchema: {
+        x: z.number().int().nonnegative().describe("X coordinate"),
+        y: z.number().int().nonnegative().describe("Y coordinate"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ x, y, serial }) => {
       const s = await resolveSerial(serial);
@@ -88,16 +90,18 @@ export function registerInputTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "swipe",
-    "Perform a swipe gesture from one point to another",
     {
-      x1: z.number().int().nonnegative().describe("Start X coordinate"),
-      y1: z.number().int().nonnegative().describe("Start Y coordinate"),
-      x2: z.number().int().nonnegative().describe("End X coordinate"),
-      y2: z.number().int().nonnegative().describe("End Y coordinate"),
-      duration: z.number().int().positive().optional().default(300).describe("Duration in milliseconds"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Perform a swipe gesture from one point to another",
+      inputSchema: {
+        x1: z.number().int().nonnegative().describe("Start X coordinate"),
+        y1: z.number().int().nonnegative().describe("Start Y coordinate"),
+        x2: z.number().int().nonnegative().describe("End X coordinate"),
+        y2: z.number().int().nonnegative().describe("End Y coordinate"),
+        duration: z.number().int().positive().optional().default(300).describe("Duration in milliseconds"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ x1, y1, x2, y2, duration, serial }) => {
       const s = await resolveSerial(serial);
@@ -108,14 +112,16 @@ export function registerInputTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "long_press",
-    "Perform a long press at the specified coordinates",
     {
-      x: z.number().int().nonnegative().describe("X coordinate"),
-      y: z.number().int().nonnegative().describe("Y coordinate"),
-      duration: z.number().int().positive().optional().default(500).describe("Duration in milliseconds"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Perform a long press at the specified coordinates",
+      inputSchema: {
+        x: z.number().int().nonnegative().describe("X coordinate"),
+        y: z.number().int().nonnegative().describe("Y coordinate"),
+        duration: z.number().int().positive().optional().default(500).describe("Duration in milliseconds"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ x, y, duration, serial }) => {
       const s = await resolveSerial(serial);
@@ -126,16 +132,18 @@ export function registerInputTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "drag_drop",
-    "Perform a drag and drop gesture from one point to another. Uses input draganddrop on Android 8.0+ (API 26), falls back to swipe on older versions.",
     {
-      startX: z.number().int().nonnegative().describe("Start X coordinate"),
-      startY: z.number().int().nonnegative().describe("Start Y coordinate"),
-      endX: z.number().int().nonnegative().describe("End X coordinate"),
-      endY: z.number().int().nonnegative().describe("End Y coordinate"),
-      duration: z.number().int().positive().optional().default(300).describe("Duration in milliseconds"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Perform a drag and drop gesture from one point to another. Uses input draganddrop on Android 8.0+ (API 26), falls back to swipe on older versions.",
+      inputSchema: {
+        startX: z.number().int().nonnegative().describe("Start X coordinate"),
+        startY: z.number().int().nonnegative().describe("Start Y coordinate"),
+        endX: z.number().int().nonnegative().describe("End X coordinate"),
+        endY: z.number().int().nonnegative().describe("End Y coordinate"),
+        duration: z.number().int().positive().optional().default(300).describe("Duration in milliseconds"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ startX, startY, endX, endY, duration, serial }) => {
       const s = await resolveSerial(serial);
@@ -158,12 +166,14 @@ export function registerInputTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "input_text",
-    "Type text into the currently focused input field",
     {
-      text: z.string().describe("Text to type"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Type text into the currently focused input field",
+      inputSchema: {
+        text: z.string().describe("Text to type"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ text, serial }) => {
       const s = await resolveSerial(serial);
@@ -175,12 +185,14 @@ export function registerInputTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "key_event",
-    "Send a key event to the device. Supports keycodes like HOME, BACK, ENTER, VOLUME_UP, etc.",
     {
-      keycode: z.union([z.string(), z.number()]).describe("Keycode name (e.g., 'HOME', 'BACK') or numeric value"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Send a key event to the device. Supports keycodes like HOME, BACK, ENTER, VOLUME_UP, etc.",
+      inputSchema: {
+        keycode: z.union([z.string(), z.number()]).describe("Keycode name (e.g., 'HOME', 'BACK') or numeric value"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ keycode, serial }) => {
       const s = await resolveSerial(serial);
@@ -192,15 +204,17 @@ export function registerInputTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "scroll",
-    "Scroll at the specified position. dx and dy are scroll amounts (-1 to 1 range approximated for ADB).",
     {
-      x: z.number().int().nonnegative().describe("X coordinate to scroll at"),
-      y: z.number().int().nonnegative().describe("Y coordinate to scroll at"),
-      dx: z.number().describe("Horizontal scroll amount (negative=left, positive=right)"),
-      dy: z.number().describe("Vertical scroll amount (negative=up, positive=down)"),
-      serial: z.string().optional().describe("Device serial number"),
+      description: "Scroll at the specified position. dx and dy are scroll amounts (-1 to 1 range approximated for ADB).",
+      inputSchema: {
+        x: z.number().int().nonnegative().describe("X coordinate to scroll at"),
+        y: z.number().int().nonnegative().describe("Y coordinate to scroll at"),
+        dx: z.number().describe("Horizontal scroll amount (negative=left, positive=right)"),
+        dy: z.number().describe("Vertical scroll amount (negative=up, positive=down)"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
     },
     async ({ x, y, dx, dy, serial }) => {
       const s = await resolveSerial(serial);
