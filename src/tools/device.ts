@@ -36,36 +36,48 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
-      const s = await resolveSerial(serial);
-      const [model, brand, manufacturer, version, sdk, screenSize, battery] =
-        await Promise.all([
-          getDeviceProperty(s, "ro.product.model"),
-          getDeviceProperty(s, "ro.product.brand"),
-          getDeviceProperty(s, "ro.product.manufacturer"),
-          getDeviceProperty(s, "ro.build.version.release"),
-          getDeviceProperty(s, "ro.build.version.sdk"),
-          getScreenSize(s),
-          execAdbShell(s, "dumpsys battery"),
-        ]);
+      try {
+        const s = await resolveSerial(serial);
+        const [model, brand, manufacturer, version, sdk, screenSize, battery] =
+          await Promise.all([
+            getDeviceProperty(s, "ro.product.model"),
+            getDeviceProperty(s, "ro.product.brand"),
+            getDeviceProperty(s, "ro.product.manufacturer"),
+            getDeviceProperty(s, "ro.build.version.release"),
+            getDeviceProperty(s, "ro.build.version.sdk"),
+            getScreenSize(s),
+            execAdbShell(s, "dumpsys battery"),
+          ]);
 
-      const batteryMatch = battery.match(/level:\s*(\d+)/);
-      const batteryLevel = batteryMatch ? parseInt(batteryMatch[1], 10) : null;
+        const batteryMatch = battery.match(/level:\s*(\d+)/);
+        const batteryLevel = batteryMatch ? parseInt(batteryMatch[1], 10) : null;
 
-      const info = {
-        serial: s,
-        model: model || null,
-        brand: brand || null,
-        manufacturer: manufacturer || null,
-        androidVersion: version || null,
-        sdkLevel: sdk ? parseInt(sdk, 10) : null,
-        screenWidth: screenSize.width,
-        screenHeight: screenSize.height,
-        batteryLevel,
-      };
+        const info = {
+          serial: s,
+          model: model || null,
+          brand: brand || null,
+          manufacturer: manufacturer || null,
+          androidVersion: version || null,
+          sdkLevel: sdk ? parseInt(sdk, 10) : null,
+          screenWidth: screenSize.width,
+          screenHeight: screenSize.height,
+          batteryLevel,
+        };
 
-      return {
-        content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
-      };
+        return {
+          content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
+        };
+      } catch (error) {
+        const err = error as Error;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Failed to get device info: ${err.message}` }),
+            },
+          ],
+        };
+      }
     }
   );
 
@@ -78,11 +90,23 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
-      const s = await resolveSerial(serial);
-      await execAdbShell(s, "input keyevent KEYCODE_WAKEUP");
-      return {
-        content: [{ type: "text", text: `Screen turned on for device ${s}` }],
-      };
+      try {
+        const s = await resolveSerial(serial);
+        await execAdbShell(s, "input keyevent KEYCODE_WAKEUP");
+        return {
+          content: [{ type: "text", text: `Screen turned on for device ${s}` }],
+        };
+      } catch (error) {
+        const err = error as Error;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Failed to turn screen on: ${err.message}` }),
+            },
+          ],
+        };
+      }
     }
   );
 
@@ -95,11 +119,23 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
-      const s = await resolveSerial(serial);
-      await execAdbShell(s, "input keyevent KEYCODE_SLEEP");
-      return {
-        content: [{ type: "text", text: `Screen turned off for device ${s}` }],
-      };
+      try {
+        const s = await resolveSerial(serial);
+        await execAdbShell(s, "input keyevent KEYCODE_SLEEP");
+        return {
+          content: [{ type: "text", text: `Screen turned off for device ${s}` }],
+        };
+      } catch (error) {
+        const err = error as Error;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Failed to turn screen off: ${err.message}` }),
+            },
+          ],
+        };
+      }
     }
   );
 
