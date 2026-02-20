@@ -32,13 +32,18 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.3.0",
+    "eslint": "^10.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

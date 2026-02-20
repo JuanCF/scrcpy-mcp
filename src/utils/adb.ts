@@ -32,7 +32,8 @@ export async function execAdb(
   } catch (error: unknown) {
     const err = error as { stderr?: string; stdout?: string; message?: string };
     throw new Error(
-      `ADB command failed: ${ADB_PATH} ${args.join(" ")}\n${err.stderr || err.message || String(error)}`
+      `ADB command failed: ${ADB_PATH} ${args.join(" ")}\n${err.stderr || err.message || String(error)}`,
+      { cause: error }
     );
   }
 }
