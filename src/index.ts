@@ -2,11 +2,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { registerDeviceTools } from "./tools/device.js";
 
 const server = new McpServer({
   name: "scrcpy-mcp",
   version: "0.1.0",
 });
+
+registerDeviceTools(server);
 
 async function main() {
   const transport = new StdioServerTransport();

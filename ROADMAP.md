@@ -38,13 +38,13 @@ Get a working MCP server with ADB-based functionality first. This provides immed
 
 ### 1.4 Device Tools - ADB Fallback (`src/tools/device.ts`)
 
-- [ ] 1.4.1 Implement `device_list` - list connected devices
-- [ ] 1.4.2 Implement `device_info` - get model, version, screen size, battery
-- [ ] 1.4.3 Implement `screen_on` - ADB `input keyevent KEYCODE_WAKEUP`
-- [ ] 1.4.4 Implement `screen_off` - ADB `input keyevent KEYCODE_SLEEP`
-- [ ] 1.4.5 Implement `connect_wifi` - enable TCP/IP and connect
-- [ ] 1.4.6 Implement `disconnect_wifi` - disconnect wireless ADB
-- [ ] 1.4.7 Note: expand_notifications, expand_settings, collapse_panels, rotate_device will use scrcpy in Phase 2
+- [x] 1.4.1 Implement `device_list` - list connected devices
+- [x] 1.4.2 Implement `device_info` - get model, version, screen size, battery
+- [x] 1.4.3 Implement `screen_on` - ADB `input keyevent KEYCODE_WAKEUP`
+- [x] 1.4.4 Implement `screen_off` - ADB `input keyevent KEYCODE_SLEEP`
+- [x] 1.4.5 Implement `connect_wifi` - enable TCP/IP and connect
+- [x] 1.4.6 Implement `disconnect_wifi` - disconnect wireless ADB
+- [x] 1.4.7 Note: expand_notifications, expand_settings, collapse_panels, rotate_device will use scrcpy in Phase 2
 
 ### 1.5 Vision Tools - ADB Fallback (`src/tools/vision.ts`)
 
