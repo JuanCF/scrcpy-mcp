@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "child_process"
 import * as net from "net"
 import * as path from "path"
 import * as fs from "fs"
-import { execAdb, execAdbShell, resolveSerial } from "./adb.js"
+import { execAdb, execAdbShell, resolveSerial, ADB_PATH } from "./adb.js"
 
 const SCRCPY_SERVER_PORT = 27183
 const SCRCPY_SERVER_PATH_LOCAL = "/data/local/tmp/scrcpy-server.jar"
@@ -108,22 +108,21 @@ export async function startScrcpyServer(
     "video_codec=h264",
   ]
 
-  spawn("adb", serverArgs, {
+  spawn(ADB_PATH, serverArgs, {
     detached: true,
     stdio: "ignore",
   }).unref()
 }
 
-function readUint16BE(buffer: Buffer, offset: number): number {
-  return buffer.readUInt16BE(offset)
-}
+const readUint16BE = (buffer: Buffer, offset: number): number =>
+  buffer.readUInt16BE(offset)
 
-async function connectToServer(port: number, timeout = 10000): Promise<net.Socket> {
-  return new Promise((resolve, reject) => {
+const connectToServer = async (port: number, timeout = 10000): Promise<net.Socket> =>
+  new Promise((resolve, reject) => {
     const socket = net.createConnection({ port, host: "127.0.0.1" })
     const timer = setTimeout(() => {
       socket.destroy()
-      reject(new Error("Connection timeout"))
+      reject(new Error(`Connection timeout to port ${port}`))
     }, timeout)
 
     socket.on("connect", () => {
@@ -133,15 +132,14 @@ async function connectToServer(port: number, timeout = 10000): Promise<net.Socke
 
     socket.on("error", (err) => {
       clearTimeout(timer)
-      reject(err)
+      reject(new Error(`Socket error connecting to port ${port}`, { cause: err }))
     })
   })
-}
 
-async function receiveDeviceMeta(socket: net.Socket): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
+const receiveDeviceMeta = async (socket: net.Socket, port: number): Promise<{ width: number; height: number }> =>
+  new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error("Timeout waiting for device metadata"))
+      reject(new Error(`Timeout waiting for device metadata on port ${port}`))
     }, 5000)
 
     let buffer = Buffer.alloc(0)
@@ -161,9 +159,10 @@ async function receiveDeviceMeta(socket: net.Socket): Promise<{ width: number; h
     }
 
     socket.on("data", onData)
-    socket.on("error", reject)
+    socket.on("error", (err) => {
+      reject(new Error(`Socket error while receiving device metadata on port ${port}`, { cause: err }))
+    })
   })
-}
 
 export async function startSession(
   serial: string,
@@ -189,11 +188,30 @@ export async function startSession(
 
   await startScrcpyServer(s, options)
 
-  await new Promise((resolve) => setTimeout(resolve, 500))
+  const connectTimeout = 10000
+  const retryInterval = 100
+  const deadline = Date.now() + connectTimeout
+  let socket: net.Socket | null = null
+  let lastError: Error | null = null
 
-  const socket = await connectToServer(port)
+  while (Date.now() < deadline) {
+    try {
+      socket = await connectToServer(port)
+      break
+    } catch (err) {
+      lastError = err as Error
+      await new Promise((resolve) => setTimeout(resolve, retryInterval))
+    }
+  }
 
-  const screenSize = await receiveDeviceMeta(socket)
+  if (!socket) {
+    throw new Error(
+      `Failed to connect to scrcpy server on port ${port} within ${connectTimeout}ms`,
+      { cause: lastError }
+    )
+  }
+
+  const screenSize = await receiveDeviceMeta(socket, port)
 
   const session: ScrcpySession = {
     serial: s,
