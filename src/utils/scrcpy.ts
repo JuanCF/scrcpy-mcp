@@ -215,7 +215,12 @@ export async function startSession(
   const port = SCRCPY_SERVER_PORT
   await setupPortForwarding(s, port)
 
-  await startScrcpyServer(s, options)
+  try {
+    await startScrcpyServer(s, options)
+  } catch (err) {
+    await removePortForwarding(s, port)
+    throw err
+  }
 
   const connectTimeout = 10000
   const retryInterval = 100
