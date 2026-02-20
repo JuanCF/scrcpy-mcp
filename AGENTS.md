@@ -6,6 +6,11 @@ Guidelines for AI coding agents working on scrcpy-mcp.
 
 scrcpy-mcp is a Model Context Protocol (MCP) server that provides AI agents with vision and control over Android devices via ADB and scrcpy. It exposes tools for device management, input, screenshots, and more.
 
+## Project Documentation
+
+- **ROADMAP.md** - Implementation roadmap with phases and milestones
+- **PLAN.md** - Detailed implementation plan with architecture and tool specifications
+
 ## Build/Lint/Test Commands
 
 ```bash

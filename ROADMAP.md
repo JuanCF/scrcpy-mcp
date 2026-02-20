@@ -272,6 +272,33 @@ Prepare for distribution.
 
 ---
 
+## Phase 6: Future Features (Post-Release)
+
+Features to consider after initial release based on user feedback.
+
+### 6.1 Live Video Streaming
+
+Enable watching the device screen in real-time while MCP controls it.
+
+- [ ] 6.1.1 Implement `start_video_stream` tool - connect to scrcpy video socket
+- [ ] 6.1.2 Pipe H.264 stream to ffmpeg for decoding
+- [ ] 6.1.3 Option A: Launch ffplay window for local viewing
+- [ ] 6.1.4 Option B: HTTP MJPEG server for browser-based viewer
+- [ ] 6.1.5 Option C: WebSocket streaming for integration with other tools
+- [ ] 6.1.6 Allow simultaneous control + viewing (video socket is separate from control socket)
+
+**Use cases:**
+- Debug automation visually while it runs
+- Live demos of AI-controlled device interactions
+- Integration with existing scrcpy GUI (`scrcpy --serial <device>` alongside MCP)
+
+**Technical notes:**
+- Video socket sends raw H.264 (needs decoding unlike screenshots)
+- Can run alongside existing control socket connection
+- Alternative: Users can run scrcpy GUI separately on same forwarded port
+
+---
+
 ## Summary
 
 | Phase | Steps | Focus | Deliverable |
