@@ -112,10 +112,24 @@ export async function startScrcpyServer(
     "video_codec=h264",
   ]
 
-  spawn(ADB_PATH, serverArgs, {
-    detached: true,
-    stdio: "ignore",
-  }).unref()
+  return new Promise((resolve, reject) => {
+    const child = spawn(ADB_PATH, serverArgs, {
+      detached: true,
+      stdio: "ignore",
+    })
+
+    child.once("error", (err) => {
+      reject(new Error(
+        `Failed to start scrcpy server for ${serial}: ${err.message}`,
+        { cause: err }
+      ))
+    })
+
+    child.once("spawn", () => {
+      child.unref()
+      resolve()
+    })
+  })
 }
 
 const readUint16BE = (buffer: Buffer, offset: number): number =>
@@ -140,7 +154,10 @@ const connectToServer = async (port: number, timeout = 10000): Promise<net.Socke
     })
   })
 
-const receiveDeviceMeta = async (socket: net.Socket, port: number): Promise<{ width: number; height: number }> =>
+const receiveDeviceMeta = async (
+  socket: net.Socket,
+  port: number
+): Promise<{ width: number; height: number }> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       socket.off("data", onData)
@@ -217,6 +234,16 @@ export async function startSession(
   }
 
   if (!socket) {
+    try {
+      await execAdbShell(s, `pkill -f scrcpy-server`)
+    } catch {
+      // Ignore if process doesn't exist
+    }
+    try {
+      await removePortForwarding(s, port)
+    } catch {
+      // Ignore if forwarding doesn't exist
+    }
     throw new Error(
       `Failed to connect to scrcpy server on port ${port} within ${connectTimeout}ms`,
       { cause: lastError }

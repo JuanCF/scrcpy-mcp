@@ -1,8 +1,8 @@
+import { spawn, ChildProcess } from "child_process"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import { execAdb, execAdbRaw, resolveSerial } from "../utils/adb.js"
 import { ADB_PATH } from "../utils/constants.js"
-import { spawn, ChildProcess } from "child_process"
 
 interface RecordingSession {
   proc: ChildProcess;
@@ -73,25 +73,42 @@ export function registerVisionTools(server: McpServer) {
       }
       args.push(remotePath);
 
-      const proc = spawn(ADB_PATH, args);
-      recordingSessions.set(s, { proc, remotePath });
+      return new Promise((resolve) => {
+        const proc = spawn(ADB_PATH, args)
 
-      proc.on("close", () => {
-        recordingSessions.delete(s);
-      });
+        proc.once("error", (err) => {
+          console.error(`[screenrecord ${s}] Failed to start: ${err.message}`)
+          resolve({
+            content: [
+              {
+                type: "text" as const,
+                text: `Failed to start recording on device ${s}: ${err.message}`,
+              },
+            ],
+          })
+        })
 
-      proc.stderr?.on("data", (data) => {
-        console.error(`[screenrecord ${s}] ${data}`);
-      });
+        proc.once("spawn", () => {
+          recordingSessions.set(s, { proc, remotePath })
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Recording started on device ${s}. Will save to ${remotePath}`,
-          },
-        ],
-      };
+          proc.on("close", () => {
+            recordingSessions.delete(s)
+          })
+
+          proc.stderr?.on("data", (data) => {
+            console.error(`[screenrecord ${s}] ${data}`)
+          })
+
+          resolve({
+            content: [
+              {
+                type: "text" as const,
+                text: `Recording started on device ${s}. Will save to ${remotePath}`,
+              },
+            ],
+          })
+        })
+      })
     }
   );
 

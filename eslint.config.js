@@ -19,6 +19,16 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_" },
       ],
+      "max-len": [
+        "error",
+        {
+          code: 100,
+          ignoreUrls: true,
+          ignoreStrings: true,
+          ignoreTemplateLiterals: true,
+          ignoreRegExpLiterals: true,
+        },
+      ],
     },
   }
 );
