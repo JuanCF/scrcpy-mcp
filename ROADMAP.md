@@ -64,11 +64,11 @@ Get a working MCP server with ADB-based functionality first. This provides immed
 
 ### 1.7 Build and Test
 
-- [ ] 1.7.1 Run `npm run build` to compile TypeScript
-- [ ] 1.7.2 Test with MCP Inspector: `npx @modelcontextprotocol/inspector node dist/index.js`
-- [ ] 1.7.3 Verify `device_list` works
-- [ ] 1.7.4 Verify `screenshot` returns valid image
-- [ ] 1.7.5 Verify `tap` works on connected device
+- [x] 1.7.1 Run `npm run build` to compile TypeScript
+- [x] 1.7.2 Test with MCP Inspector: `npx @modelcontextprotocol/inspector node dist/index.js`
+- [x] 1.7.3 Verify `device_list` works
+- [x] 1.7.4 Verify `screenshot` returns valid image
+- [x] 1.7.5 Verify `tap` works on connected device
 
 **Phase 1 Milestone:** Working MCP server with ADB-based device listing, screenshots, and input.
 
