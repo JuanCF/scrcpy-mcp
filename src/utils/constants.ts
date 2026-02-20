@@ -6,4 +6,4 @@ export const SCRCPY_SERVER_PORT = 27183
 
 export const SCRCPY_SERVER_PATH_LOCAL = "/data/local/tmp/scrcpy-server.jar"
 
-export const SCRCPY_SERVER_VERSION = "2.7"
+export const SCRCPY_SERVER_VERSION = process.env.SCRCPY_SERVER_VERSION || "2.7"
