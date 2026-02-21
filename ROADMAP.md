@@ -144,8 +144,8 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.9 Wire scrcpy Fast Path - Clipboard Tools
 
-- [ ] 2.9.1 Implement `clipboard_get` - use scrcpy GET_CLIPBOARD + listen for device message
-- [ ] 2.9.2 Implement `clipboard_set` - use scrcpy SET_CLIPBOARD with optional paste flag
+- [x] 2.9.1 Implement `clipboard_get` - use scrcpy GET_CLIPBOARD + listen for device message
+- [x] 2.9.2 Implement `clipboard_set` - use scrcpy SET_CLIPBOARD with optional paste flag
 
 ### 2.10 Wire scrcpy Fast Path - App Tools
 
