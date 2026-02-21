@@ -560,7 +560,9 @@ export async function startSession(
     const controlConnectDeadline = Date.now() + 5000
     while (Date.now() < controlConnectDeadline) {
       try {
-        controlSocket = await connectToServer(port)
+        const remaining = controlConnectDeadline - Date.now()
+        if (remaining <= 0) break
+        controlSocket = await connectToServer(port, remaining)
         break
       } catch (err) {
         lastControlError = err as Error
@@ -569,6 +571,12 @@ export async function startSession(
     }
 
     if (!controlSocket) {
+      socket.destroy()
+      if (session.videoProcess) {
+        session.videoProcess.kill()
+        session.videoProcess = null
+      }
+      sessions.delete(s)
       throw new Error(
         `Failed to connect control socket on port ${port} for device ${s} within timeout`,
         { cause: lastControlError }
