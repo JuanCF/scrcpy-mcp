@@ -22,22 +22,9 @@ import {
   DISPLAY_POWER_MODE_OFF,
   DISPLAY_POWER_MODE_ON,
   TEXT_MAX_LENGTH,
-} from "./constants.js"
-
-const JPEG_SOI = 0xffd8
-const JPEG_EOI = 0xffd9
-
-export {
-  ACTION_DOWN,
-  ACTION_UP,
-  ACTION_MOVE,
-  KEYCODE_HOME,
-  KEYCODE_BACK,
-  KEYCODE_MENU,
-  KEYCODE_ENTER,
-  KEYCODE_VOLUME_UP,
-  KEYCODE_VOLUME_DOWN,
-  KEYCODE_POWER,
+  MAX_JPEG_BUFFER_SIZE,
+  JPEG_SOI,
+  JPEG_EOI,
 } from "./constants.js"
 
 export function serializeInjectKeycode(
@@ -247,6 +234,12 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
 
   ffmpeg.stdout?.on("data", (chunk: Buffer) => {
     jpegBuffer = Buffer.concat([jpegBuffer, chunk])
+
+    if (jpegBuffer.length > MAX_JPEG_BUFFER_SIZE) {
+      console.error(`[scrcpy] JPEG buffer exceeded max size, resetting`)
+      jpegBuffer = Buffer.alloc(0)
+      return
+    }
     
     let soiIdx = -1
     for (let i = 0; i < jpegBuffer.length - 1; i++) {
@@ -264,13 +257,22 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
       jpegBuffer = jpegBuffer.subarray(soiIdx)
     }
     
-    for (let i = 2; i < jpegBuffer.length - 1; i++) {
-      if (jpegBuffer.readUInt16BE(i) === JPEG_EOI) {
-        const frame = jpegBuffer.subarray(0, i + 2)
-        session.frameBuffer = Buffer.from(frame)
-        jpegBuffer = jpegBuffer.subarray(i + 2)
+    while (jpegBuffer.length > 4) {
+      let eoiIdx = -1
+      for (let i = 2; i < jpegBuffer.length - 1; i++) {
+        if (jpegBuffer.readUInt16BE(i) === JPEG_EOI) {
+          eoiIdx = i
+          break
+        }
+      }
+      
+      if (eoiIdx === -1) {
         break
       }
+      
+      const frame = jpegBuffer.subarray(0, eoiIdx + 2)
+      session.frameBuffer = Buffer.from(frame)
+      jpegBuffer = jpegBuffer.subarray(eoiIdx + 2)
     }
   })
 
@@ -299,6 +301,19 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
   })
 
   if (ffmpeg.stdin) {
+    ffmpeg.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE") {
+        console.error(`[scrcpy] ffmpeg stdin EPIPE for ${session.serial}`)
+      } else {
+        console.error(`[scrcpy] ffmpeg stdin error for ${session.serial}:`, err.message)
+      }
+      videoSocket.unpipe()
+    })
+
+    ffmpeg.stdin.on("close", () => {
+      videoSocket.unpipe()
+    })
+
     videoSocket.pipe(ffmpeg.stdin)
   }
 }
@@ -552,7 +567,7 @@ export async function startSession(
     }
 
     if (!controlSocket) {
-      throw new Error("Failed to connect control socket within timeout")
+      throw new Error(`Failed to connect control socket on port ${port} within timeout`)
     }
 
     session.controlSocket = controlSocket

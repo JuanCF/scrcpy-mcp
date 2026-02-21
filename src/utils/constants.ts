@@ -82,3 +82,8 @@ export const KEYCODE_MENU = 82
  * messages on the control socket. For longer text, split into multiple calls.
  */
 export const TEXT_MAX_LENGTH = 300
+
+export const JPEG_SOI = 0xffd8
+export const JPEG_EOI = 0xffd9
+
+export const MAX_JPEG_BUFFER_SIZE = 10 * 1024 * 1024
