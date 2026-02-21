@@ -220,14 +220,14 @@ export function getLatestFrame(serial: string): Buffer | null {
   return session?.frameBuffer ?? null
 }
 
-function findFfmpeg(): string {
+const findFfmpeg = (): string => {
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
     return process.env.FFMPEG_PATH
   }
   return "ffmpeg"
 }
 
-function startVideoStream(session: ScrcpySession, port: number): void {
+function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void {
   const ffmpegPath = findFfmpeg()
   
   const ffmpeg = spawn(ffmpegPath, [
@@ -241,6 +241,7 @@ function startVideoStream(session: ScrcpySession, port: number): void {
   ])
 
   session.videoProcess = ffmpeg
+  session.videoSocket = videoSocket
 
   let jpegBuffer = Buffer.alloc(0)
 
@@ -273,6 +274,10 @@ function startVideoStream(session: ScrcpySession, port: number): void {
     }
   })
 
+  ffmpeg.stderr?.on("data", (data: Buffer) => {
+    console.error(`[scrcpy] ffmpeg stderr: ${data.toString().trim()}`)
+  })
+
   ffmpeg.on("error", (err: Error) => {
     console.error(`[scrcpy] ffmpeg error for ${session.serial}:`, err.message)
   })
@@ -284,27 +289,18 @@ function startVideoStream(session: ScrcpySession, port: number): void {
     session.videoProcess = null
   })
 
-  const connectVideoSocket = () => {
-    const videoSocket = net.createConnection({ port, host: "127.0.0.1" })
-    
-    videoSocket.on("connect", () => {
-      session.videoSocket = videoSocket
-      if (ffmpeg.stdin) {
-        videoSocket.pipe(ffmpeg.stdin)
-      }
-    })
+  videoSocket.on("error", (err: Error) => {
+    console.error(`[scrcpy] Video socket error for ${session.serial}:`, err.message)
+    session.videoSocket = null
+  })
 
-    videoSocket.on("error", (err: Error) => {
-      console.error(`[scrcpy] Video socket error for ${session.serial}:`, err.message)
-      session.videoSocket = null
-    })
+  videoSocket.on("close", () => {
+    session.videoSocket = null
+  })
 
-    videoSocket.on("close", () => {
-      session.videoSocket = null
-    })
+  if (ffmpeg.stdin) {
+    videoSocket.pipe(ffmpeg.stdin)
   }
-
-  connectVideoSocket()
 }
 
 export function findScrcpyServer(): string | null {
@@ -533,8 +529,8 @@ export async function startSession(
 
     session = {
       serial: s,
-      controlSocket: socket,
-      videoSocket: null,
+      controlSocket: null,
+      videoSocket: socket,
       videoProcess: null,
       frameBuffer: null,
       screenSize,
@@ -542,16 +538,37 @@ export async function startSession(
 
     sessions.set(s, session)
 
-    socket.on("close", () => {
-      session!.controlSocket = null
+    startVideoStream(session, socket)
+
+    let controlSocket: net.Socket | null = null
+    const controlConnectDeadline = Date.now() + 5000
+    while (Date.now() < controlConnectDeadline) {
+      try {
+        controlSocket = await connectToServer(port)
+        break
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+
+    if (!controlSocket) {
+      throw new Error("Failed to connect control socket within timeout")
+    }
+
+    session.controlSocket = controlSocket
+
+    controlSocket.on("close", () => {
+      if (session) {
+        session.controlSocket = null
+      }
     })
 
-    socket.on("error", (err) => {
+    controlSocket.on("error", (err) => {
       console.error(`[scrcpy] Control socket error for ${s}:`, err.message)
-      session!.controlSocket = null
+      if (session) {
+        session.controlSocket = null
+      }
     })
-
-    startVideoStream(session, port)
 
     return session
   } catch (err) {
