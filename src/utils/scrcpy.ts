@@ -282,13 +282,24 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
 
   ffmpeg.on("error", (err: Error) => {
     console.error(`[scrcpy] ffmpeg error for ${session.serial}:`, err.message)
+    if (session.videoSocket) {
+      session.videoSocket.destroy()
+      session.videoSocket = null
+    }
+    session.frameBuffer = null
+    session.videoProcess = null
   })
 
   ffmpeg.on("exit", (code: number | null) => {
+    session.videoProcess = null
     if (code !== 0 && code !== null) {
       console.error(`[scrcpy] ffmpeg exited with code ${code} for ${session.serial}`)
+      if (session.videoSocket) {
+        session.videoSocket.destroy()
+        session.videoSocket = null
+      }
+      session.frameBuffer = null
     }
-    session.videoProcess = null
   })
 
   videoSocket.on("error", (err: Error) => {
@@ -469,7 +480,10 @@ const receiveDeviceMeta = async (
       clearTimeout(timer)
       socket.off("data", onData)
       socket.off("error", onError)
-      reject(new Error(`Socket error while receiving device metadata on port ${port}`, { cause: err }))
+      reject(new Error(
+        `Socket error receiving device metadata on port ${port}`,
+        { cause: err }
+      ))
     }
 
     socket.on("data", onData)
