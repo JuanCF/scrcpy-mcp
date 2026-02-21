@@ -15,18 +15,31 @@ export function registerSessionTools(server: McpServer): void {
       },
     },
     async ({ serial, maxSize, maxFps }) => {
-      const s = await resolveSerial(serial)
-      const session = await startSession(s, { maxSize, maxFps })
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            status: "connected",
-            serial: s,
-            screenSize: session.screenSize,
-            message: "scrcpy session active. Input and screenshots will use the fast path.",
-          }, null, 2),
-        }],
+      try {
+        const s = await resolveSerial(serial)
+        const session = await startSession(s, { maxSize, maxFps })
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: "connected",
+              serial: s,
+              screenSize: session.screenSize,
+              message: "scrcpy session active. Input and screenshots will use the fast path.",
+            }, null, 2),
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: "error",
+              message: `Failed to start scrcpy session: ${err.message}`,
+            }, null, 2),
+          }],
+        }
       }
     }
   )
@@ -40,13 +53,26 @@ export function registerSessionTools(server: McpServer): void {
       },
     },
     async ({ serial }) => {
-      const s = await resolveSerial(serial)
-      await stopSession(s)
-      return {
-        content: [{
-          type: "text",
-          text: "scrcpy session stopped. Tools will use ADB fallback.",
-        }],
+      try {
+        const s = await resolveSerial(serial)
+        await stopSession(s)
+        return {
+          content: [{
+            type: "text",
+            text: "scrcpy session stopped. Tools will use ADB fallback.",
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: true,
+              message: `Failed to stop scrcpy session: ${err.message}`,
+            }),
+          }],
+        }
       }
     }
   )
