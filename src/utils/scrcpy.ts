@@ -69,6 +69,16 @@ export function serializeInjectText(text: string): Buffer {
   return buffer
 }
 
+const floatToU16FP = (f: number): number => {
+  const u = Math.round(f * 65536)
+  return Math.min(u, 0xffff)
+}
+
+const floatToI16FP = (f: number): number => {
+  const i = Math.round(f * 32768)
+  return Math.max(-0x8000, Math.min(i, 0x7fff))
+}
+
 export function serializeInjectTouchEvent(
   action: number,
   pointerId: bigint,
@@ -77,25 +87,20 @@ export function serializeInjectTouchEvent(
   screenWidth: number,
   screenHeight: number,
   pressure: number,
-  buttons = 0
+  buttons = 0,
+  actionButton = 0
 ): Buffer {
   const buffer = Buffer.alloc(32)
-  let offset = 0
-  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT, offset++)
-  buffer.writeUInt8(action, offset++)
-  buffer.writeBigInt64BE(pointerId, offset)
-  offset += 8
-  buffer.writeInt32BE(x, offset)
-  offset += 4
-  buffer.writeInt32BE(y, offset)
-  offset += 4
-  buffer.writeUInt16BE(screenWidth, offset)
-  offset += 2
-  buffer.writeUInt16BE(screenHeight, offset)
-  offset += 2
-  buffer.writeFloatBE(pressure, offset)
-  offset += 4
-  buffer.writeUInt32BE(buttons, offset)
+  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT, 0)
+  buffer.writeUInt8(action, 1)
+  buffer.writeBigUInt64BE(pointerId, 2)
+  buffer.writeInt32BE(x, 10)
+  buffer.writeInt32BE(y, 14)
+  buffer.writeUInt16BE(screenWidth, 18)
+  buffer.writeUInt16BE(screenHeight, 20)
+  buffer.writeUInt16BE(floatToU16FP(pressure), 22)
+  buffer.writeUInt32BE(actionButton, 24)
+  buffer.writeUInt32BE(buttons, 28)
   return buffer
 }
 
@@ -109,21 +114,16 @@ export function serializeInjectScrollEvent(
   buttons = 0
 ): Buffer {
   const buffer = Buffer.alloc(21)
-  let offset = 0
-  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT, offset++)
-  buffer.writeInt32BE(x, offset)
-  offset += 4
-  buffer.writeInt32BE(y, offset)
-  offset += 4
-  buffer.writeUInt16BE(screenWidth, offset)
-  offset += 2
-  buffer.writeUInt16BE(screenHeight, offset)
-  offset += 2
-  buffer.writeFloatBE(hScroll, offset)
-  offset += 4
-  buffer.writeFloatBE(vScroll, offset)
-  offset += 4
-  buffer.writeUInt32BE(buttons, offset)
+  buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT, 0)
+  buffer.writeInt32BE(x, 1)
+  buffer.writeInt32BE(y, 5)
+  buffer.writeUInt16BE(screenWidth, 9)
+  buffer.writeUInt16BE(screenHeight, 11)
+  const hNorm = Math.max(-1, Math.min(hScroll / 16, 1))
+  const vNorm = Math.max(-1, Math.min(vScroll / 16, 1))
+  buffer.writeInt16BE(floatToI16FP(hNorm), 13)
+  buffer.writeInt16BE(floatToI16FP(vNorm), 15)
+  buffer.writeUInt32BE(buttons, 17)
   return buffer
 }
 
@@ -146,28 +146,29 @@ export function serializeCollapsePanels(): Buffer {
   return Buffer.from([CONTROL_MSG_TYPE_COLLAPSE_PANELS])
 }
 
-export function serializeGetClipboard(sequence: number): Buffer {
-  const buffer = Buffer.alloc(5)
+export const CLIPBOARD_COPY_KEY_NONE = 0
+export const CLIPBOARD_COPY_KEY_COPY = 1
+export const CLIPBOARD_COPY_KEY_CUT = 2
+
+export function serializeGetClipboard(copyKey = CLIPBOARD_COPY_KEY_NONE): Buffer {
+  const buffer = Buffer.alloc(2)
   buffer.writeUInt8(CONTROL_MSG_TYPE_GET_CLIPBOARD, 0)
-  buffer.writeUInt32BE(sequence, 1)
+  buffer.writeUInt8(copyKey, 1)
   return buffer
 }
 
 export function serializeSetClipboard(
-  sequence: number,
+  sequence: bigint,
   text: string,
   paste = false
 ): Buffer {
   const textBytes = Buffer.from(text, "utf8")
   const buffer = Buffer.alloc(14 + textBytes.length)
-  let offset = 0
-  buffer.writeUInt8(CONTROL_MSG_TYPE_SET_CLIPBOARD, offset++)
-  buffer.writeUInt32BE(sequence, offset)
-  offset += 4
-  buffer.writeUInt8(paste ? 1 : 0, offset++)
-  buffer.writeUInt32BE(textBytes.length, offset)
-  offset += 4
-  textBytes.copy(buffer, offset)
+  buffer.writeUInt8(CONTROL_MSG_TYPE_SET_CLIPBOARD, 0)
+  buffer.writeBigUInt64BE(sequence, 1)
+  buffer.writeUInt8(paste ? 1 : 0, 9)
+  buffer.writeUInt32BE(textBytes.length, 10)
+  textBytes.copy(buffer, 14)
   return buffer
 }
 
