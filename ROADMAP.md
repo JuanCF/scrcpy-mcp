@@ -130,8 +130,8 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.7 Wire scrcpy Fast Path - Vision Tools
 
-- [ ] 2.7.1 Update `screenshot` - use scrcpy frame buffer when session active (~33ms)
-- [ ] 2.7.2 Keep ADB fallback for when no session (~500ms)
+- [x] 2.7.1 Update `screenshot` - use scrcpy frame buffer when session active (~33ms)
+- [x] 2.7.2 Keep ADB fallback for when no session (~500ms)
 
 ### 2.8 Wire scrcpy Fast Path - Device Tools
 

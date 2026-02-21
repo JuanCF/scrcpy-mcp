@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import { execAdb, execAdbRaw, resolveSerial } from "../utils/adb.js"
 import { ADB_PATH } from "../utils/constants.js"
+import { getSession, getLatestFrame } from "../utils/scrcpy.js"
 
 interface RecordingSession {
   proc: ChildProcess;
@@ -22,6 +23,23 @@ export function registerVisionTools(server: McpServer) {
     },
     async ({ serial }) => {
       const s = await resolveSerial(serial);
+      
+      const session = getSession(s);
+      if (session && session.controlSocket && !session.controlSocket.destroyed) {
+        const frame = getLatestFrame(s);
+        if (frame && frame.length > 0) {
+          return {
+            content: [
+              {
+                type: "image" as const,
+                data: frame.toString("base64"),
+                mimeType: "image/jpeg",
+              },
+            ],
+          };
+        }
+      }
+      
       const pngBuffer = await execAdbRaw(["-s", s, "exec-out", "screencap", "-p"]);
       
       return {
