@@ -135,12 +135,12 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.8 Wire scrcpy Fast Path - Device Tools
 
-- [ ] 2.8.1 Implement `screen_on` - use scrcpy SET_DISPLAY_POWER (on=true)
-- [ ] 2.8.2 Implement `screen_off` - use scrcpy SET_DISPLAY_POWER (on=false)
-- [ ] 2.8.3 Implement `rotate_device` - use scrcpy ROTATE_DEVICE
-- [ ] 2.8.4 Implement `expand_notifications` - use scrcpy EXPAND_NOTIFICATION_PANEL (scrcpy only, no ADB fallback)
-- [ ] 2.8.5 Implement `expand_settings` - use scrcpy EXPAND_SETTINGS_PANEL (scrcpy only, no ADB fallback)
-- [ ] 2.8.6 Implement `collapse_panels` - use scrcpy COLLAPSE_PANELS (scrcpy only, no ADB fallback)
+- [x] 2.8.1 Implement `screen_on` - use scrcpy SET_DISPLAY_POWER (on=true)
+- [x] 2.8.2 Implement `screen_off` - use scrcpy SET_DISPLAY_POWER (on=false)
+- [x] 2.8.3 Implement `rotate_device` - use scrcpy ROTATE_DEVICE
+- [x] 2.8.4 Implement `expand_notifications` - use scrcpy EXPAND_NOTIFICATION_PANEL (scrcpy only, no ADB fallback)
+- [x] 2.8.5 Implement `expand_settings` - use scrcpy EXPAND_SETTINGS_PANEL (scrcpy only, no ADB fallback)
+- [x] 2.8.6 Implement `collapse_panels` - use scrcpy COLLAPSE_PANELS (scrcpy only, no ADB fallback)
 
 ### 2.9 Wire scrcpy Fast Path - Clipboard Tools
 
