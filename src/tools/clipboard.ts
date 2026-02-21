@@ -21,14 +21,45 @@ async function getClipboardViaAdb(serial: string): Promise<string | null> {
 
     const serviceResult = await execAdbShell(serial, "service call clipboard 2")
     if (serviceResult) {
-      const match = serviceResult.match(/result=0[^)]*\)\s*(.+)/i)
+      // Try multiple parsing strategies for clipboard service output
+      let text: string | null = null
+
+      // Strategy 1: Original pattern - result=0...) followed by content
+      let match = serviceResult.match(/result=0[^)]*\)\s*(.+)/i)
       if (match && match[1]) {
-        let text = match[1].trim()
+        text = match[1].trim()
+      }
+
+      // Strategy 2: Look for quoted strings (common in service dumps)
+      if (!text) {
+        match = serviceResult.match(/"([^"]*)"/)
+        if (match && match[1]) {
+          text = match[1]
+        }
+      }
+
+      // Strategy 3: Look for hex string patterns (e.g., 0x1234 or hex array)
+      if (!text) {
+        match = serviceResult.match(/0x([0-9a-fA-F]+)/)
+        if (match && match[1]) {
+          try {
+            const hex = match[1]
+            text = Buffer.from(hex, "hex").toString("utf8")
+          } catch {
+            // Fall through to null
+          }
+        }
+      }
+
+      if (text) {
+        // Normalize escape sequences (octal \ddd -> char)
         text = text.replace(/\\(\d{3})/g, (_, oct) =>
           String.fromCharCode(parseInt(oct, 8))
         )
         return text
       }
+
+      console.error(`[clipboard_get] Could not parse service result: ${serviceResult}`)
     }
 
     return null
@@ -42,16 +73,19 @@ async function setClipboardViaAdb(serial: string, text: string): Promise<boolean
     const sdkStr = await getDeviceProperty(serial, "ro.build.version.sdk")
     const sdkLevel = parseInt(sdkStr, 10)
 
-    const escaped = text.replace(/"/g, '\\"').replace(/'/g, "\\'")
+    // Encode text as base64 to avoid shell injection issues
+    const base64Text = Buffer.from(text).toString("base64")
 
     if (!isNaN(sdkLevel) && sdkLevel >= 29) {
-      await execAdbShell(serial, `cmd clipboard set "${escaped}"`)
+      // Decode base64 and pipe to clipboard command - avoids shell interpolation
+      await execAdbShell(serial, `echo "${base64Text}" | base64 -d | cmd clipboard set`)
       return true
     }
 
+    // Fallback to broadcast for older Android versions
     await execAdbShell(
       serial,
-      `am broadcast -a clipper.set -e text "${escaped}"`
+      `echo "${base64Text}" | base64 -d | xargs -0 am broadcast -a clipper.set -e text`
     )
     return true
   } catch {
@@ -158,12 +192,15 @@ export function registerClipboardTools(server: McpServer): void {
 
         const success = await setClipboardViaAdb(s, text)
         if (success) {
+          const pasteNote = paste
+            ? " Note: Paste action not performed (requires active scrcpy session)."
+            : ""
           return {
             content: [{
               type: "text",
               text: JSON.stringify({
                 success: true,
-                message: `Clipboard set: "${text}"`,
+                message: `Clipboard set: "${text}".${pasteNote}`,
                 source: "adb",
               }),
             }],
