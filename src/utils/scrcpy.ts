@@ -24,6 +24,9 @@ import {
   TEXT_MAX_LENGTH,
 } from "./constants.js"
 
+const JPEG_SOI = 0xffd8
+const JPEG_EOI = 0xffd9
+
 export {
   ACTION_DOWN,
   ACTION_UP,
@@ -195,6 +198,7 @@ export interface ScrcpySessionOptions {
 export interface ScrcpySession {
   serial: string
   controlSocket: net.Socket | null
+  videoSocket: net.Socket | null
   videoProcess: ChildProcess | null
   frameBuffer: Buffer | null
   screenSize: { width: number; height: number }
@@ -209,6 +213,98 @@ export function getSession(serial: string): ScrcpySession | undefined {
 export function hasActiveSession(serial: string): boolean {
   const session = sessions.get(serial)
   return session !== undefined && session.controlSocket !== null && !session.controlSocket.destroyed
+}
+
+export function getLatestFrame(serial: string): Buffer | null {
+  const session = sessions.get(serial)
+  return session?.frameBuffer ?? null
+}
+
+function findFfmpeg(): string {
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+    return process.env.FFMPEG_PATH
+  }
+  return "ffmpeg"
+}
+
+function startVideoStream(session: ScrcpySession, port: number): void {
+  const ffmpegPath = findFfmpeg()
+  
+  const ffmpeg = spawn(ffmpegPath, [
+    "-f", "h264",
+    "-i", "pipe:0",
+    "-f", "image2pipe",
+    "-vcodec", "mjpeg",
+    "-q:v", "5",
+    "-vf", "fps=30",
+    "pipe:1",
+  ])
+
+  session.videoProcess = ffmpeg
+
+  let jpegBuffer = Buffer.alloc(0)
+
+  ffmpeg.stdout?.on("data", (chunk: Buffer) => {
+    jpegBuffer = Buffer.concat([jpegBuffer, chunk])
+    
+    let soiIdx = -1
+    for (let i = 0; i < jpegBuffer.length - 1; i++) {
+      if (jpegBuffer.readUInt16BE(i) === JPEG_SOI) {
+        soiIdx = i
+        break
+      }
+    }
+    
+    if (soiIdx === -1) {
+      return
+    }
+    
+    if (soiIdx > 0) {
+      jpegBuffer = jpegBuffer.subarray(soiIdx)
+    }
+    
+    for (let i = 2; i < jpegBuffer.length - 1; i++) {
+      if (jpegBuffer.readUInt16BE(i) === JPEG_EOI) {
+        const frame = jpegBuffer.subarray(0, i + 2)
+        session.frameBuffer = Buffer.from(frame)
+        jpegBuffer = jpegBuffer.subarray(i + 2)
+        break
+      }
+    }
+  })
+
+  ffmpeg.on("error", (err: Error) => {
+    console.error(`[scrcpy] ffmpeg error for ${session.serial}:`, err.message)
+  })
+
+  ffmpeg.on("exit", (code: number | null) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[scrcpy] ffmpeg exited with code ${code} for ${session.serial}`)
+    }
+    session.videoProcess = null
+  })
+
+  const connectVideoSocket = () => {
+    const videoSocket = net.createConnection({ port, host: "127.0.0.1" })
+    
+    videoSocket.on("connect", () => {
+      session.videoSocket = videoSocket
+      if (ffmpeg.stdin) {
+        videoSocket.pipe(ffmpeg.stdin)
+      }
+    })
+
+    videoSocket.on("error", (err: Error) => {
+      console.error(`[scrcpy] Video socket error for ${session.serial}:`, err.message)
+      session.videoSocket = null
+    })
+
+    videoSocket.on("close", () => {
+      session.videoSocket = null
+    })
+  }
+
+  connectVideoSocket()
 }
 
 export function findScrcpyServer(): string | null {
@@ -438,6 +534,7 @@ export async function startSession(
     session = {
       serial: s,
       controlSocket: socket,
+      videoSocket: null,
       videoProcess: null,
       frameBuffer: null,
       screenSize,
@@ -453,6 +550,8 @@ export async function startSession(
       console.error(`[scrcpy] Control socket error for ${s}:`, err.message)
       session!.controlSocket = null
     })
+
+    startVideoStream(session, port)
 
     return session
   } catch (err) {
@@ -476,6 +575,11 @@ export async function stopSession(serial: string): Promise<void> {
 
   if (!session) {
     return
+  }
+
+  if (session.videoSocket) {
+    session.videoSocket.destroy()
+    session.videoSocket = null
   }
 
   if (session.controlSocket) {

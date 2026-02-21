@@ -98,11 +98,11 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.3 scrcpy Video Stream
 
-- [ ] 2.3.1 Implement `startVideoStream(session)` - spawn ffmpeg to decode H.264
-- [ ] 2.3.2 Handle video socket data and pipe to ffmpeg stdin
-- [ ] 2.3.3 Capture decoded frames from ffmpeg stdout
-- [ ] 2.3.4 Store latest frame in session.frameBuffer
-- [ ] 2.3.5 Implement `getLatestFrame()` method
+- [x] 2.3.1 Implement `startVideoStream(session)` - spawn ffmpeg to decode H.264
+- [x] 2.3.2 Handle video socket data and pipe to ffmpeg stdin
+- [x] 2.3.3 Capture decoded frames from ffmpeg stdout
+- [x] 2.3.4 Store latest frame in session.frameBuffer
+- [x] 2.3.5 Implement `getLatestFrame()` method
 
 ### 2.4 scrcpy Session Management
 
