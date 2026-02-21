@@ -70,11 +70,13 @@ export function serializeInjectText(text: string): Buffer {
 }
 
 const floatToU16FP = (f: number): number => {
+  f = Math.max(0, Math.min(f, 1))
   const u = Math.round(f * 65536)
   return Math.min(u, 0xffff)
 }
 
 const floatToI16FP = (f: number): number => {
+  f = Math.max(-1, Math.min(f, 1))
   const i = Math.round(f * 32768)
   return Math.max(-0x8000, Math.min(i, 0x7fff))
 }
