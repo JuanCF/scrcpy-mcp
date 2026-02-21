@@ -25,6 +25,8 @@ import {
   MAX_JPEG_BUFFER_SIZE,
   JPEG_SOI,
   JPEG_EOI,
+  DEVICE_MSG_TYPE_CLIPBOARD,
+  MAX_CLIPBOARD_BYTES,
 } from "./constants.js"
 
 export function serializeInjectKeycode(
@@ -189,6 +191,7 @@ export interface ScrcpySession {
   videoProcess: ChildProcess | null
   frameBuffer: Buffer | null
   screenSize: { width: number; height: number }
+  clipboardContent: string | null
 }
 
 const sessions: Map<string, ScrcpySession> = new Map()
@@ -490,6 +493,45 @@ const receiveDeviceMeta = async (
     socket.on("error", onError)
   })
 
+const startDeviceMessageHandler = (session: ScrcpySession): void => {
+  if (!session.controlSocket) return
+
+  let messageBuffer = Buffer.alloc(0)
+
+  session.controlSocket.on("data", (data: Buffer) => {
+    messageBuffer = Buffer.concat([messageBuffer, data])
+
+    while (messageBuffer.length >= 5) {
+      const msgType = messageBuffer.readUInt8(0)
+
+      if (msgType === DEVICE_MSG_TYPE_CLIPBOARD) {
+        const textLength = messageBuffer.readUInt32BE(1)
+
+        if (textLength > MAX_CLIPBOARD_BYTES) {
+          console.error(
+            `[scrcpy] [${session.serial}] Clipboard payload too large: ` +
+              `${textLength} bytes (max ${MAX_CLIPBOARD_BYTES}), resetting buffer`
+          )
+          messageBuffer = Buffer.alloc(0)
+          break
+        }
+
+        if (messageBuffer.length < 5 + textLength) break
+
+        const text = messageBuffer.toString("utf8", 5, 5 + textLength)
+        session.clipboardContent = text
+
+        messageBuffer = messageBuffer.subarray(5 + textLength)
+      } else {
+        console.error(
+          `[scrcpy] [${session.serial}] Unknown device message type: ${msgType}, resetting buffer`
+        )
+        messageBuffer = Buffer.alloc(0)
+      }
+    }
+  })
+}
+
 export async function startSession(
   serial: string,
   options: ScrcpySessionOptions = {}
@@ -563,11 +605,13 @@ export async function startSession(
       videoProcess: null,
       frameBuffer: null,
       screenSize,
+      clipboardContent: null,
     }
 
-    sessions.set(s, session)
+    const currentSession = session
+    sessions.set(s, currentSession)
 
-    startVideoStream(session, socket)
+    startVideoStream(currentSession, socket)
 
     let controlSocket: net.Socket | null = null
     let lastControlError: Error | null = null
@@ -586,9 +630,9 @@ export async function startSession(
 
     if (!controlSocket) {
       socket.destroy()
-      if (session.videoProcess) {
-        session.videoProcess.kill()
-        session.videoProcess = null
+      if (currentSession.videoProcess) {
+        currentSession.videoProcess.kill()
+        currentSession.videoProcess = null
       }
       sessions.delete(s)
       throw new Error(
@@ -597,22 +641,20 @@ export async function startSession(
       )
     }
 
-    session.controlSocket = controlSocket
+    currentSession.controlSocket = controlSocket
 
     controlSocket.on("close", () => {
-      if (session) {
-        session.controlSocket = null
-      }
+      currentSession.controlSocket = null
     })
 
     controlSocket.on("error", (err) => {
       console.error(`[scrcpy] Control socket error for ${s}:`, err.message)
-      if (session) {
-        session.controlSocket = null
-      }
+      currentSession.controlSocket = null
     })
 
-    return session
+    startDeviceMessageHandler(currentSession)
+
+    return currentSession
   } catch (err) {
     if (session) {
       sessions.delete(s)

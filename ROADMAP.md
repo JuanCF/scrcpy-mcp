@@ -106,11 +106,11 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.4 scrcpy Session Management
 
-- [ ] 2.4.1 Implement `startSession(serial, options)` - full lifecycle: push, forward, start server, connect sockets
-- [ ] 2.4.2 Implement `stopSession(serial)` - cleanup: close sockets, kill processes, remove forwarding
-- [ ] 2.4.3 Implement `getSession(serial)` - retrieve active session
-- [ ] 2.4.4 Implement `hasActiveSession(serial)` - check if session exists and is connected
-- [ ] 2.4.5 Handle device messages (CLIPBOARD) from server
+- [x] 2.4.1 Implement `startSession(serial, options)` - full lifecycle: push, forward, start server, connect sockets
+- [x] 2.4.2 Implement `stopSession(serial)` - cleanup: close sockets, kill processes, remove forwarding
+- [x] 2.4.3 Implement `getSession(serial)` - retrieve active session
+- [x] 2.4.4 Implement `hasActiveSession(serial)` - check if session exists and is connected
+- [x] 2.4.5 Handle device messages (CLIPBOARD) from server
 
 ### 2.5 Session Tools (`src/tools/session.ts`)
 
