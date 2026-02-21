@@ -114,9 +114,9 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.5 Session Tools (`src/tools/session.ts`)
 
-- [ ] 2.5.1 Implement `start_session` - start scrcpy session with options (maxSize, maxFps)
-- [ ] 2.5.2 Implement `stop_session` - stop scrcpy session
-- [ ] 2.5.3 Update entry point to register session tools
+- [x] 2.5.1 Implement `start_session` - start scrcpy session with options (maxSize, maxFps)
+- [x] 2.5.2 Implement `stop_session` - stop scrcpy session
+- [x] 2.5.3 Update entry point to register session tools
 
 ### 2.6 Wire scrcpy Fast Path - Input Tools
 
