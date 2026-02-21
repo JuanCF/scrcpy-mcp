@@ -167,7 +167,7 @@ async function scrollViaScrcpy(
   if (!session) throw new Error(`No session for ${serial}`)
   const { width, height } = session.screenSize
 
-  sendControlMessage(serial, serializeInjectScrollEvent(x, y, width, height, dx, dy))
+  sendControlMessage(serial, serializeInjectScrollEvent(x, y, width, height, dx * 16, dy * 16))
 }
 
 async function keyEventViaScrcpy(serial: string, keycode: number): Promise<void> {
@@ -192,20 +192,30 @@ export function registerInputTools(server: McpServer): void {
       },
     },
     async ({ x, y, serial }) => {
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await tapViaScrcpy(s, x, y)
-          return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[tap] scrcpy failed, falling back to ADB: ${err.message}`)
+        if (hasActiveSession(s)) {
+          try {
+            await tapViaScrcpy(s, x, y)
+            return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[tap] scrcpy failed, falling back to ADB: ${err.message}`)
+          }
+        }
+
+        await execAdbShell(s, `input tap ${x} ${y}`)
+        return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
         }
       }
-
-      await execAdbShell(s, `input tap ${x} ${y}`)
-      return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
     }
   )
 
@@ -223,29 +233,39 @@ export function registerInputTools(server: McpServer): void {
       },
     },
     async ({ x1, y1, x2, y2, duration, serial }) => {
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await swipeViaScrcpy(s, x1, y1, x2, y2, duration)
-          return {
-            content: [{
-              type: "text",
-              text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
-            }],
+        if (hasActiveSession(s)) {
+          try {
+            await swipeViaScrcpy(s, x1, y1, x2, y2, duration)
+            return {
+              content: [{
+                type: "text",
+                text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
+              }],
+            }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[swipe] scrcpy failed, falling back to ADB: ${err.message}`)
           }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[swipe] scrcpy failed, falling back to ADB: ${err.message}`)
         }
-      }
 
-      await execAdbShell(s, `input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`)
-      return {
-        content: [{
-          type: "text",
-          text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
-        }],
+        await execAdbShell(s, `input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`)
+        return {
+          content: [{
+            type: "text",
+            text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
       }
     }
   )
@@ -262,25 +282,35 @@ export function registerInputTools(server: McpServer): void {
       },
     },
     async ({ x, y, duration, serial }) => {
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await longPressViaScrcpy(s, x, y, duration)
-          return {
-            content: [{
-              type: "text",
-              text: `Long pressed at (${x}, ${y}) for ${duration}ms`,
-            }],
+        if (hasActiveSession(s)) {
+          try {
+            await longPressViaScrcpy(s, x, y, duration)
+            return {
+              content: [{
+                type: "text",
+                text: `Long pressed at (${x}, ${y}) for ${duration}ms`,
+              }],
+            }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[long_press] scrcpy failed, falling back to ADB: ${err.message}`)
           }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[long_press] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+
+        await execAdbShell(s, `input swipe ${x} ${y} ${x} ${y} ${duration}`)
+        return { content: [{ type: "text", text: `Long pressed at (${x}, ${y}) for ${duration}ms` }] }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
         }
       }
-
-      await execAdbShell(s, `input swipe ${x} ${y} ${x} ${y} ${duration}`)
-      return { content: [{ type: "text", text: `Long pressed at (${x}, ${y}) for ${duration}ms` }] }
     }
   )
 
@@ -298,43 +328,53 @@ export function registerInputTools(server: McpServer): void {
       },
     },
     async ({ startX, startY, endX, endY, duration, serial }) => {
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await swipeViaScrcpy(s, startX, startY, endX, endY, duration)
+        if (hasActiveSession(s)) {
+          try {
+            await swipeViaScrcpy(s, startX, startY, endX, endY, duration)
+            return {
+              content: [{
+                type: "text",
+                text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
+              }],
+            }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[drag_drop] scrcpy failed, falling back to ADB: ${err.message}`)
+          }
+        }
+
+        const sdkStr = await getDeviceProperty(s, "ro.build.version.sdk")
+        const sdkLevel = parseInt(sdkStr, 10)
+
+        if (!isNaN(sdkLevel) && sdkLevel >= 26) {
+          await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`)
           return {
             content: [{
               type: "text",
               text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
             }],
           }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[drag_drop] scrcpy failed, falling back to ADB: ${err.message}`)
         }
-      }
 
-      const sdkStr = await getDeviceProperty(s, "ro.build.version.sdk")
-      const sdkLevel = parseInt(sdkStr, 10)
-
-      if (!isNaN(sdkLevel) && sdkLevel >= 26) {
-        await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`)
+        console.error(`[drag_drop] SDK ${sdkLevel} < 26, using swipe fallback`)
+        await execAdbShell(s, `input swipe ${startX} ${startY} ${endX} ${endY} ${duration}`)
         return {
           content: [{
             type: "text",
-            text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
+            text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)`,
           }],
         }
-      }
-
-      console.error(`[drag_drop] SDK ${sdkLevel} < 26, using swipe fallback`)
-      await execAdbShell(s, `input swipe ${startX} ${startY} ${endX} ${endY} ${duration}`)
-      return {
-        content: [{
-          type: "text",
-          text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)`,
-        }],
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
       }
     }
   )
@@ -349,21 +389,31 @@ export function registerInputTools(server: McpServer): void {
       },
     },
     async ({ text, serial }) => {
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await inputTextViaScrcpy(s, text)
-          return { content: [{ type: "text", text: `Typed: "${text}"` }] }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[input_text] scrcpy failed, falling back to ADB: ${err.message}`)
+        if (hasActiveSession(s)) {
+          try {
+            await inputTextViaScrcpy(s, text)
+            return { content: [{ type: "text", text: `Typed: "${text}"` }] }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[input_text] scrcpy failed, falling back to ADB: ${err.message}`)
+          }
+        }
+
+        const escaped = escapeTextForShell(text)
+        await execAdbShell(s, `input text "${escaped}"`)
+        return { content: [{ type: "text", text: `Typed: "${text}"` }] }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
         }
       }
-
-      const escaped = escapeTextForShell(text)
-      await execAdbShell(s, `input text "${escaped}"`)
-      return { content: [{ type: "text", text: `Typed: "${text}"` }] }
     }
   )
 
@@ -396,20 +446,30 @@ export function registerInputTools(server: McpServer): void {
         }
       }
 
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await keyEventViaScrcpy(s, code)
-          return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[key_event] scrcpy failed, falling back to ADB: ${err.message}`)
+        if (hasActiveSession(s)) {
+          try {
+            await keyEventViaScrcpy(s, code)
+            return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[key_event] scrcpy failed, falling back to ADB: ${err.message}`)
+          }
+        }
+
+        await execAdbShell(s, `input keyevent ${code}`)
+        return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
         }
       }
-
-      await execAdbShell(s, `input keyevent ${code}`)
-      return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
     }
   )
 
@@ -426,35 +486,45 @@ export function registerInputTools(server: McpServer): void {
       },
     },
     async ({ x, y, dx, dy, serial }) => {
-      const s = await resolveSerial(serial)
+      try {
+        const s = await resolveSerial(serial)
 
-      if (hasActiveSession(s)) {
-        try {
-          await scrollViaScrcpy(s, x, y, dx, dy)
-          return {
-            content: [{
-              type: "text",
-              text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
-            }],
+        if (hasActiveSession(s)) {
+          try {
+            await scrollViaScrcpy(s, x, y, dx, dy)
+            return {
+              content: [{
+                type: "text",
+                text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
+              }],
+            }
+          } catch (error) {
+            const err = error as Error
+            console.error(`[scroll] scrcpy failed, falling back to ADB: ${err.message}`)
           }
-        } catch (error) {
-          const err = error as Error
-          console.error(`[scroll] scrcpy failed, falling back to ADB: ${err.message}`)
         }
-      }
 
-      const duration = 300
-      const distance = 100
+        const duration = 300
+        const distance = 100
 
-      const endX = Math.max(0, Math.round(x + dx * distance))
-      const endY = Math.max(0, Math.round(y + dy * distance))
+        const endX = Math.max(0, Math.round(x + dx * distance))
+        const endY = Math.max(0, Math.round(y + dy * distance))
 
-      await execAdbShell(s, `input swipe ${x} ${y} ${endX} ${endY} ${duration}`)
-      return {
-        content: [{
-          type: "text",
-          text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
-        }],
+        await execAdbShell(s, `input swipe ${x} ${y} ${endX} ${endY} ${duration}`)
+        return {
+          content: [{
+            type: "text",
+            text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
       }
     }
   )

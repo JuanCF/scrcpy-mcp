@@ -87,7 +87,7 @@ export function serializeInjectTouchEvent(
   const buffer = Buffer.alloc(32)
   buffer.writeUInt8(CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT, 0)
   buffer.writeUInt8(action, 1)
-  buffer.writeBigUInt64BE(pointerId, 2)
+  buffer.writeBigUInt64BE(BigInt.asUintN(64, pointerId), 2)
   buffer.writeInt32BE(x, 10)
   buffer.writeInt32BE(y, 14)
   buffer.writeUInt16BE(screenWidth, 18)
