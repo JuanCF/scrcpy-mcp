@@ -556,18 +556,23 @@ export async function startSession(
     startVideoStream(session, socket)
 
     let controlSocket: net.Socket | null = null
+    let lastControlError: Error | null = null
     const controlConnectDeadline = Date.now() + 5000
     while (Date.now() < controlConnectDeadline) {
       try {
         controlSocket = await connectToServer(port)
         break
-      } catch {
+      } catch (err) {
+        lastControlError = err as Error
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
     }
 
     if (!controlSocket) {
-      throw new Error(`Failed to connect control socket on port ${port} within timeout`)
+      throw new Error(
+        `Failed to connect control socket on port ${port} for device ${s} within timeout`,
+        { cause: lastControlError }
+      )
     }
 
     session.controlSocket = controlSocket
