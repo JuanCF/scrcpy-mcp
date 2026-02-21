@@ -120,13 +120,13 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.6 Wire scrcpy Fast Path - Input Tools
 
-- [ ] 2.6.1 Update `tap` - use scrcpy INJECT_TOUCH_EVENT when session active
-- [ ] 2.6.2 Update `swipe` - use scrcpy INJECT_TOUCH_EVENT with interpolation
-- [ ] 2.6.3 Update `long_press` - use scrcpy INJECT_TOUCH_EVENT (DOWN, delay, UP)
-- [ ] 2.6.4 Update `drag_drop` - use scrcpy INJECT_TOUCH_EVENT
-- [ ] 2.6.5 Update `input_text` - use scrcpy INJECT_TEXT
-- [ ] 2.6.6 Update `key_event` - use scrcpy INJECT_KEYCODE
-- [ ] 2.6.7 Update `scroll` - use scrcpy INJECT_SCROLL_EVENT
+- [x] 2.6.1 Update `tap` - use scrcpy INJECT_TOUCH_EVENT when session active
+- [x] 2.6.2 Update `swipe` - use scrcpy INJECT_TOUCH_EVENT with interpolation
+- [x] 2.6.3 Update `long_press` - use scrcpy INJECT_TOUCH_EVENT (DOWN, delay, UP)
+- [x] 2.6.4 Update `drag_drop` - use scrcpy INJECT_TOUCH_EVENT
+- [x] 2.6.5 Update `input_text` - use scrcpy INJECT_TEXT
+- [x] 2.6.6 Update `key_event` - use scrcpy INJECT_KEYCODE
+- [x] 2.6.7 Update `scroll` - use scrcpy INJECT_SCROLL_EVENT
 
 ### 2.7 Wire scrcpy Fast Path - Vision Tools
 
