@@ -236,7 +236,7 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
     jpegBuffer = Buffer.concat([jpegBuffer, chunk])
 
     if (jpegBuffer.length > MAX_JPEG_BUFFER_SIZE) {
-      console.error(`[scrcpy] JPEG buffer exceeded max size, resetting`)
+      console.error(`[scrcpy] [${session.serial}] JPEG buffer exceeded max size, resetting`)
       jpegBuffer = Buffer.alloc(0)
       return
     }
@@ -277,7 +277,7 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
   })
 
   ffmpeg.stderr?.on("data", (data: Buffer) => {
-    console.error(`[scrcpy] ffmpeg stderr: ${data.toString().trim()}`)
+    console.error(`[scrcpy] [${session.serial}] ffmpeg stderr: ${data.toString().trim()}`)
   })
 
   ffmpeg.on("error", (err: Error) => {
