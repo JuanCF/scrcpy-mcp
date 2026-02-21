@@ -178,6 +178,53 @@ export function sendControlMessage(serial: string, message: Buffer): void {
   session.controlSocket.write(message)
 }
 
+let clipboardSequence = BigInt(0)
+
+function getNextClipboardSequence(): bigint {
+  clipboardSequence = clipboardSequence + BigInt(1)
+  return clipboardSequence
+}
+
+export async function getClipboardViaScrcpy(
+  serial: string,
+  timeout = 5000
+): Promise<string | null> {
+  const session = getSession(serial)
+  if (!session || !session.controlSocket || session.controlSocket.destroyed) {
+    throw new Error(`No active scrcpy session for device ${serial}`)
+  }
+
+  session.clipboardContent = null
+
+  const msg = serializeGetClipboard(CLIPBOARD_COPY_KEY_NONE)
+  sendControlMessage(serial, msg)
+
+  const startTime = Date.now()
+  while (Date.now() - startTime < timeout) {
+    if (session.clipboardContent !== null) {
+      return session.clipboardContent
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  return null
+}
+
+export async function setClipboardViaScrcpy(
+  serial: string,
+  text: string,
+  paste = false
+): Promise<void> {
+  const session = getSession(serial)
+  if (!session || !session.controlSocket || session.controlSocket.destroyed) {
+    throw new Error(`No active scrcpy session for device ${serial}`)
+  }
+
+  const sequence = getNextClipboardSequence()
+  const msg = serializeSetClipboard(sequence, text, paste)
+  sendControlMessage(serial, msg)
+}
+
 export interface ScrcpySessionOptions {
   maxSize?: number
   maxFps?: number
