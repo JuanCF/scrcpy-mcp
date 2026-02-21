@@ -504,8 +504,6 @@ const startDeviceMessageHandler = (session: ScrcpySession): void => {
       const msgType = messageBuffer.readUInt8(0)
 
       if (msgType === DEVICE_MSG_TYPE_CLIPBOARD) {
-        if (messageBuffer.length < 5) break
-
         const textLength = messageBuffer.readUInt32BE(1)
 
         if (messageBuffer.length < 5 + textLength) break
@@ -515,8 +513,8 @@ const startDeviceMessageHandler = (session: ScrcpySession): void => {
 
         messageBuffer = messageBuffer.subarray(5 + textLength)
       } else {
-        console.error(`[scrcpy] Unknown device message type: ${msgType}`)
-        messageBuffer = messageBuffer.subarray(1)
+        console.error(`[scrcpy] Unknown device message type: ${msgType}, resetting buffer`)
+        messageBuffer = Buffer.alloc(0)
       }
     }
   })
