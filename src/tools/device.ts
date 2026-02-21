@@ -25,7 +25,8 @@ const requireActiveSession = (
   if (!hasActiveSession(serial)) {
     return {
       error: true,
-      message: `${toolName} requires an active scrcpy session for device ${serial}. Start a session first with start_session.`,
+      message: `${toolName} requires an active scrcpy session for device ${serial}. ` +
+        `Start a session first with start_session.`,
     }
   }
   return null
@@ -270,33 +271,38 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
+      let s = "unknown"
       try {
-        const s = await resolveSerial(serial);
+        s = await resolveSerial(serial)
 
-        const sessionError = requireActiveSession(s, "rotate_device");
+        const sessionError = requireActiveSession(s, "rotate_device")
         if (sessionError) {
           return {
             content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          };
+          }
         }
 
-        sendControlMessage(s, serializeRotateDevice());
+        sendControlMessage(s, serializeRotateDevice())
         return {
           content: [{ type: "text", text: `Device rotated for ${s}` }],
-        };
+        }
       } catch (error) {
-        const err = error as Error;
+        const err = error as Error
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to rotate device: ${err.message}` }),
+              text: JSON.stringify({
+                error: true,
+                serial: s || "unknown",
+                message: `Failed to rotate device: ${err.message}`,
+              }),
             },
           ],
-        };
+        }
       }
     }
-  );
+  )
 
   server.registerTool(
     "expand_notifications",
@@ -307,33 +313,38 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
+      let s = "unknown"
       try {
-        const s = await resolveSerial(serial);
+        s = await resolveSerial(serial)
 
-        const sessionError = requireActiveSession(s, "expand_notifications");
+        const sessionError = requireActiveSession(s, "expand_notifications")
         if (sessionError) {
           return {
             content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          };
+          }
         }
 
-        sendControlMessage(s, serializeExpandNotificationPanel());
+        sendControlMessage(s, serializeExpandNotificationPanel())
         return {
           content: [{ type: "text", text: `Notification panel expanded for ${s}` }],
-        };
+        }
       } catch (error) {
-        const err = error as Error;
+        const err = error as Error
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to expand notifications: ${err.message}` }),
+              text: JSON.stringify({
+                error: true,
+                serial: s,
+                message: `Failed to expand notifications: ${err.message}`,
+              }),
             },
           ],
-        };
+        }
       }
     }
-  );
+  )
 
   server.registerTool(
     "expand_settings",
@@ -344,33 +355,38 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
+      let s = "unknown"
       try {
-        const s = await resolveSerial(serial);
+        s = await resolveSerial(serial)
 
-        const sessionError = requireActiveSession(s, "expand_settings");
+        const sessionError = requireActiveSession(s, "expand_settings")
         if (sessionError) {
           return {
             content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          };
+          }
         }
 
-        sendControlMessage(s, serializeExpandSettingsPanel());
+        sendControlMessage(s, serializeExpandSettingsPanel())
         return {
           content: [{ type: "text", text: `Quick settings panel expanded for ${s}` }],
-        };
+        }
       } catch (error) {
-        const err = error as Error;
+        const err = error as Error
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to expand settings: ${err.message}` }),
+              text: JSON.stringify({
+                error: true,
+                serial: s,
+                message: `Failed to expand settings: ${err.message}`,
+              }),
             },
           ],
-        };
+        }
       }
     }
-  );
+  )
 
   server.registerTool(
     "collapse_panels",
@@ -381,31 +397,36 @@ export function registerDeviceTools(server: McpServer) {
       },
     },
     async ({ serial }) => {
+      let s = "unknown"
       try {
-        const s = await resolveSerial(serial);
+        s = await resolveSerial(serial)
 
-        const sessionError = requireActiveSession(s, "collapse_panels");
+        const sessionError = requireActiveSession(s, "collapse_panels")
         if (sessionError) {
           return {
             content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          };
+          }
         }
 
-        sendControlMessage(s, serializeCollapsePanels());
+        sendControlMessage(s, serializeCollapsePanels())
         return {
           content: [{ type: "text", text: `Panels collapsed for ${s}` }],
-        };
+        }
       } catch (error) {
-        const err = error as Error;
+        const err = error as Error
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to collapse panels: ${err.message}` }),
+              text: JSON.stringify({
+                error: true,
+                serial: s,
+                message: `Failed to collapse panels: ${err.message}`,
+              }),
             },
           ],
-        };
+        }
       }
     }
-  );
+  )
 }
