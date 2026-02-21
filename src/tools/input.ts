@@ -1,6 +1,16 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { execAdbShell, resolveSerial, getDeviceProperty } from "../utils/adb.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { z } from "zod"
+import { execAdbShell, resolveSerial, getDeviceProperty } from "../utils/adb.js"
+import {
+  getSession,
+  hasActiveSession,
+  sendControlMessage,
+  serializeInjectKeycode,
+  serializeInjectText,
+  serializeInjectTouchEvent,
+  serializeInjectScrollEvent,
+} from "../utils/scrcpy.js"
+import { ACTION_DOWN, ACTION_UP, ACTION_MOVE } from "../utils/constants.js"
 
 const KEYCODE_MAP: Record<string, number> = {
   HOME: 3,
@@ -29,7 +39,9 @@ const KEYCODE_MAP: Record<string, number> = {
   BRIGHTNESS_UP: 221,
   BRIGHTNESS_DOWN: 220,
   NOTIFICATION: 83,
-};
+}
+
+const POINTER_ID_GENERIC_FINGER = BigInt(-2)
 
 function escapeTextForShell(text: string): string {
   return text
@@ -52,25 +64,123 @@ function escapeTextForShell(text: string): string {
     .replace(/\?/g, "\\?")
     .replace(/\$/g, "\\$")
     .replace(/`/g, "\\`")
-    .replace(/!/g, "\\!");
+    .replace(/!/g, "\\!")
 }
 
 function resolveKeycode(keycode: string | number): number {
   if (typeof keycode === "number") {
-    return keycode;
+    return keycode
   }
-  const upperKey = keycode.toUpperCase();
+  const upperKey = keycode.toUpperCase()
   if (KEYCODE_MAP[upperKey] !== undefined) {
-    return KEYCODE_MAP[upperKey];
+    return KEYCODE_MAP[upperKey]
   }
-  const parsed = parseInt(keycode, 10);
+  const parsed = parseInt(keycode, 10)
   if (isNaN(parsed)) {
-    throw new Error(`Unknown keycode: ${keycode}`);
+    throw new Error(`Unknown keycode: ${keycode}`)
   }
-  return parsed;
+  return parsed
 }
 
-export function registerInputTools(server: McpServer) {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function sendTouchEvent(
+  serial: string,
+  action: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  pressure: number
+): void {
+  const msg = serializeInjectTouchEvent(
+    action, POINTER_ID_GENERIC_FINGER, x, y, width, height, pressure
+  )
+  sendControlMessage(serial, msg)
+}
+
+async function tapViaScrcpy(serial: string, x: number, y: number): Promise<void> {
+  const session = getSession(serial)
+  if (!session) throw new Error(`No session for ${serial}`)
+  const { width, height } = session.screenSize
+
+  sendTouchEvent(serial, ACTION_DOWN, x, y, width, height, 1.0)
+  await sleep(10)
+  sendTouchEvent(serial, ACTION_UP, x, y, width, height, 0.0)
+}
+
+async function swipeViaScrcpy(
+  serial: string,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  duration: number
+): Promise<void> {
+  const session = getSession(serial)
+  if (!session) throw new Error(`No session for ${serial}`)
+  const { width, height } = session.screenSize
+
+  const steps = Math.max(2, Math.floor(duration / 16))
+  const dx = (x2 - x1) / steps
+  const dy = (y2 - y1) / steps
+  const stepDelay = duration / steps
+
+  sendTouchEvent(serial, ACTION_DOWN, x1, y1, width, height, 1.0)
+  await sleep(stepDelay)
+
+  for (let i = 1; i < steps; i++) {
+    const x = Math.round(x1 + dx * i)
+    const y = Math.round(y1 + dy * i)
+    sendTouchEvent(serial, ACTION_MOVE, x, y, width, height, 1.0)
+    await sleep(stepDelay)
+  }
+
+  sendTouchEvent(serial, ACTION_UP, x2, y2, width, height, 0.0)
+}
+
+async function longPressViaScrcpy(
+  serial: string,
+  x: number,
+  y: number,
+  duration: number
+): Promise<void> {
+  const session = getSession(serial)
+  if (!session) throw new Error(`No session for ${serial}`)
+  const { width, height } = session.screenSize
+
+  sendTouchEvent(serial, ACTION_DOWN, x, y, width, height, 1.0)
+  await sleep(duration)
+  sendTouchEvent(serial, ACTION_UP, x, y, width, height, 0.0)
+}
+
+async function scrollViaScrcpy(
+  serial: string,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number
+): Promise<void> {
+  const session = getSession(serial)
+  if (!session) throw new Error(`No session for ${serial}`)
+  const { width, height } = session.screenSize
+
+  sendControlMessage(serial, serializeInjectScrollEvent(x, y, width, height, dx, dy))
+}
+
+async function keyEventViaScrcpy(serial: string, keycode: number): Promise<void> {
+  sendControlMessage(serial, serializeInjectKeycode(ACTION_DOWN, keycode))
+  await sleep(10)
+  sendControlMessage(serial, serializeInjectKeycode(ACTION_UP, keycode))
+}
+
+async function inputTextViaScrcpy(serial: string, text: string): Promise<void> {
+  sendControlMessage(serial, serializeInjectText(text))
+}
+
+export function registerInputTools(server: McpServer): void {
   server.registerTool(
     "tap",
     {
@@ -82,13 +192,22 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ x, y, serial }) => {
-      const s = await resolveSerial(serial);
-      await execAdbShell(s, `input tap ${x} ${y}`);
-      return {
-        content: [{ type: "text", text: `Tapped at (${x}, ${y})` }],
-      };
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await tapViaScrcpy(s, x, y)
+          return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[tap] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+      }
+
+      await execAdbShell(s, `input tap ${x} ${y}`)
+      return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
     }
-  );
+  )
 
   server.registerTool(
     "swipe",
@@ -104,13 +223,32 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ x1, y1, x2, y2, duration, serial }) => {
-      const s = await resolveSerial(serial);
-      await execAdbShell(s, `input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`);
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await swipeViaScrcpy(s, x1, y1, x2, y2, duration)
+          return {
+            content: [{
+              type: "text",
+              text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
+            }],
+          }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[swipe] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+      }
+
+      await execAdbShell(s, `input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`)
       return {
-        content: [{ type: "text", text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms` }],
-      };
+        content: [{
+          type: "text",
+          text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
+        }],
+      }
     }
-  );
+  )
 
   server.registerTool(
     "long_press",
@@ -124,13 +262,27 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ x, y, duration, serial }) => {
-      const s = await resolveSerial(serial);
-      await execAdbShell(s, `input swipe ${x} ${y} ${x} ${y} ${duration}`);
-      return {
-        content: [{ type: "text", text: `Long pressed at (${x}, ${y}) for ${duration}ms` }],
-      };
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await longPressViaScrcpy(s, x, y, duration)
+          return {
+            content: [{
+              type: "text",
+              text: `Long pressed at (${x}, ${y}) for ${duration}ms`,
+            }],
+          }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[long_press] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+      }
+
+      await execAdbShell(s, `input swipe ${x} ${y} ${x} ${y} ${duration}`)
+      return { content: [{ type: "text", text: `Long pressed at (${x}, ${y}) for ${duration}ms` }] }
     }
-  );
+  )
 
   server.registerTool(
     "drag_drop",
@@ -146,25 +298,46 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ startX, startY, endX, endY, duration, serial }) => {
-      const s = await resolveSerial(serial);
-      
-      const sdkStr = await getDeviceProperty(s, "ro.build.version.sdk");
-      const sdkLevel = parseInt(sdkStr, 10);
-      
-      if (!isNaN(sdkLevel) && sdkLevel >= 26) {
-        await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`);
-        return {
-          content: [{ type: "text", text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms` }],
-        };
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await swipeViaScrcpy(s, startX, startY, endX, endY, duration)
+          return {
+            content: [{
+              type: "text",
+              text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
+            }],
+          }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[drag_drop] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
       }
-      
-      console.error(`[drag_drop] SDK ${sdkLevel} < 26, using swipe fallback`);
-      await execAdbShell(s, `input swipe ${startX} ${startY} ${endX} ${endY} ${duration}`);
+
+      const sdkStr = await getDeviceProperty(s, "ro.build.version.sdk")
+      const sdkLevel = parseInt(sdkStr, 10)
+
+      if (!isNaN(sdkLevel) && sdkLevel >= 26) {
+        await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`)
+        return {
+          content: [{
+            type: "text",
+            text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
+          }],
+        }
+      }
+
+      console.error(`[drag_drop] SDK ${sdkLevel} < 26, using swipe fallback`)
+      await execAdbShell(s, `input swipe ${startX} ${startY} ${endX} ${endY} ${duration}`)
       return {
-        content: [{ type: "text", text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)` }],
-      };
+        content: [{
+          type: "text",
+          text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)`,
+        }],
+      }
     }
-  );
+  )
 
   server.registerTool(
     "input_text",
@@ -176,14 +349,23 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ text, serial }) => {
-      const s = await resolveSerial(serial);
-      const escaped = escapeTextForShell(text);
-      await execAdbShell(s, `input text "${escaped}"`);
-      return {
-        content: [{ type: "text", text: `Typed: "${text}"` }],
-      };
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await inputTextViaScrcpy(s, text)
+          return { content: [{ type: "text", text: `Typed: "${text}"` }] }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[input_text] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+      }
+
+      const escaped = escapeTextForShell(text)
+      await execAdbShell(s, `input text "${escaped}"`)
+      return { content: [{ type: "text", text: `Typed: "${text}"` }] }
     }
-  );
+  )
 
   server.registerTool(
     "key_event",
@@ -195,11 +377,11 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ keycode, serial }) => {
-      let code: number;
+      let code: number
       try {
-        code = resolveKeycode(keycode);
+        code = resolveKeycode(keycode)
       } catch (error) {
-        const err = error as Error;
+        const err = error as Error
         return {
           content: [
             {
@@ -211,16 +393,25 @@ export function registerInputTools(server: McpServer) {
               }),
             },
           ],
-        };
+        }
       }
-      
-      const s = await resolveSerial(serial);
-      await execAdbShell(s, `input keyevent ${code}`);
-      return {
-        content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }],
-      };
+
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await keyEventViaScrcpy(s, code)
+          return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[key_event] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+      }
+
+      await execAdbShell(s, `input keyevent ${code}`)
+      return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
     }
-  );
+  )
 
   server.registerTool(
     "scroll",
@@ -235,17 +426,36 @@ export function registerInputTools(server: McpServer) {
       },
     },
     async ({ x, y, dx, dy, serial }) => {
-      const s = await resolveSerial(serial);
-      const duration = 300;
-      const distance = 100;
-      
-      const endX = Math.max(0, Math.round(x + dx * distance));
-      const endY = Math.max(0, Math.round(y + dy * distance));
-      
-      await execAdbShell(s, `input swipe ${x} ${y} ${endX} ${endY} ${duration}`);
+      const s = await resolveSerial(serial)
+
+      if (hasActiveSession(s)) {
+        try {
+          await scrollViaScrcpy(s, x, y, dx, dy)
+          return {
+            content: [{
+              type: "text",
+              text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
+            }],
+          }
+        } catch (error) {
+          const err = error as Error
+          console.error(`[scroll] scrcpy failed, falling back to ADB: ${err.message}`)
+        }
+      }
+
+      const duration = 300
+      const distance = 100
+
+      const endX = Math.max(0, Math.round(x + dx * distance))
+      const endY = Math.max(0, Math.round(y + dy * distance))
+
+      await execAdbShell(s, `input swipe ${x} ${y} ${endX} ${endY} ${duration}`)
       return {
-        content: [{ type: "text", text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})` }],
-      };
+        content: [{
+          type: "text",
+          text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
+        }],
+      }
     }
-  );
+  )
 }
