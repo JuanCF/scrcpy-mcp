@@ -19,6 +19,7 @@ import {
   CONTROL_MSG_TYPE_GET_CLIPBOARD,
   CONTROL_MSG_TYPE_SET_CLIPBOARD,
   CONTROL_MSG_TYPE_ROTATE_DEVICE,
+  CONTROL_MSG_TYPE_START_APP,
   DISPLAY_POWER_MODE_OFF,
   DISPLAY_POWER_MODE_ON,
   TEXT_MAX_LENGTH,
@@ -170,6 +171,18 @@ export function serializeRotateDevice(): Buffer {
   return Buffer.from([CONTROL_MSG_TYPE_ROTATE_DEVICE])
 }
 
+export function serializeStartApp(packageName: string): Buffer {
+  const nameBytes = Buffer.from(packageName, "utf8")
+  if (nameBytes.length > 255) {
+    throw new Error(`Package name too long: ${nameBytes.length} bytes (max 255)`)
+  }
+  const buffer = Buffer.alloc(2 + nameBytes.length)
+  buffer.writeUInt8(CONTROL_MSG_TYPE_START_APP, 0)
+  buffer.writeUInt8(nameBytes.length, 1)
+  nameBytes.copy(buffer, 2)
+  return buffer
+}
+
 export function sendControlMessage(serial: string, message: Buffer): void {
   const session = getSession(serial)
   if (!session || !session.controlSocket || session.controlSocket.destroyed) {
@@ -222,6 +235,19 @@ export async function setClipboardViaScrcpy(
 
   const sequence = getNextClipboardSequence()
   const msg = serializeSetClipboard(sequence, text, paste)
+  sendControlMessage(serial, msg)
+}
+
+export async function startAppViaScrcpy(
+  serial: string,
+  packageName: string
+): Promise<void> {
+  const session = getSession(serial)
+  if (!session || !session.controlSocket || session.controlSocket.destroyed) {
+    throw new Error(`No active scrcpy session for device ${serial}`)
+  }
+
+  const msg = serializeStartApp(packageName)
   sendControlMessage(serial, msg)
 }
 

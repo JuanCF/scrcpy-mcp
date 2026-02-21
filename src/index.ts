@@ -6,6 +6,7 @@ import { registerSessionTools } from "./tools/session.js"
 import { registerDeviceTools } from "./tools/device.js"
 import { registerVisionTools } from "./tools/vision.js"
 import { registerInputTools } from "./tools/input.js"
+import { registerAppTools } from "./tools/apps.js"
 import { registerClipboardTools } from "./tools/clipboard.js"
 
 const server = new McpServer({
@@ -17,6 +18,7 @@ registerSessionTools(server)
 registerDeviceTools(server)
 registerVisionTools(server)
 registerInputTools(server)
+registerAppTools(server)
 registerClipboardTools(server)
 
 async function main() {
