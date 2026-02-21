@@ -492,7 +492,7 @@ const receiveDeviceMeta = async (
     socket.on("error", onError)
   })
 
-function startDeviceMessageHandler(session: ScrcpySession): void {
+const startDeviceMessageHandler = (session: ScrcpySession): void => {
   if (!session.controlSocket) return
 
   let messageBuffer = Buffer.alloc(0)
