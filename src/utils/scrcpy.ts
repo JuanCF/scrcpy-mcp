@@ -26,6 +26,7 @@ import {
   JPEG_SOI,
   JPEG_EOI,
   DEVICE_MSG_TYPE_CLIPBOARD,
+  MAX_CLIPBOARD_BYTES,
 } from "./constants.js"
 
 export function serializeInjectKeycode(
@@ -506,6 +507,15 @@ const startDeviceMessageHandler = (session: ScrcpySession): void => {
       if (msgType === DEVICE_MSG_TYPE_CLIPBOARD) {
         const textLength = messageBuffer.readUInt32BE(1)
 
+        if (textLength > MAX_CLIPBOARD_BYTES) {
+          console.error(
+            `[scrcpy] [${session.serial}] Clipboard payload too large: ` +
+              `${textLength} bytes (max ${MAX_CLIPBOARD_BYTES}), resetting buffer`
+          )
+          messageBuffer = Buffer.alloc(0)
+          break
+        }
+
         if (messageBuffer.length < 5 + textLength) break
 
         const text = messageBuffer.toString("utf8", 5, 5 + textLength)
@@ -513,7 +523,9 @@ const startDeviceMessageHandler = (session: ScrcpySession): void => {
 
         messageBuffer = messageBuffer.subarray(5 + textLength)
       } else {
-        console.error(`[scrcpy] Unknown device message type: ${msgType}, resetting buffer`)
+        console.error(
+          `[scrcpy] [${session.serial}] Unknown device message type: ${msgType}, resetting buffer`
+        )
         messageBuffer = Buffer.alloc(0)
       }
     }

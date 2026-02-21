@@ -89,3 +89,5 @@ export const JPEG_SOI = 0xffd8
 export const JPEG_EOI = 0xffd9
 
 export const MAX_JPEG_BUFFER_SIZE = 10 * 1024 * 1024
+
+export const MAX_CLIPBOARD_BYTES = 1024 * 1024
