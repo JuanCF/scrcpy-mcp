@@ -30,8 +30,18 @@ export function registerAppTools(server: McpServer): void {
           }
         }
 
-        // Use scrcpy fast path if session is active and no force-stop needed
-        if (hasActiveSession(s) && !forceStop) {
+        // Use scrcpy fast path if session is active
+        if (hasActiveSession(s)) {
+          // If force-stop requested, do it first via ADB (scrcpy doesn't have force-stop)
+          if (forceStop) {
+            try {
+              await execAdbShell(s, `am force-stop ${actualPackageName}`)
+              console.error(`[app_start] Force-stopped ${actualPackageName}`)
+            } catch {
+              // Ignore force-stop errors (app may not be running)
+            }
+          }
+
           try {
             await startAppViaScrcpy(s, actualPackageName)
             return {
@@ -39,7 +49,9 @@ export function registerAppTools(server: McpServer): void {
                 type: "text",
                 text: JSON.stringify({
                   success: true,
-                  message: `App started: ${actualPackageName}`,
+                  message: forceStop
+                    ? `App force-stopped and started: ${actualPackageName}`
+                    : `App started: ${actualPackageName}`,
                   source: "scrcpy",
                 }),
               }],
@@ -61,8 +73,8 @@ export function registerAppTools(server: McpServer): void {
           }
         }
 
-        // Launch the app via ADB
-        await execAdbShell(s, `am start -n ${actualPackageName}/.${actualPackageName.split(".").pop()}.MainActivity`)
+        // Launch the app via ADB using monkey to resolve the correct launcher activity
+        await execAdbShell(s, `monkey -p ${actualPackageName} -c android.intent.category.LAUNCHER 1`)
 
         return {
           content: [{
