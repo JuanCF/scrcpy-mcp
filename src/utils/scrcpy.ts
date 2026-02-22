@@ -330,7 +330,9 @@ function startVideoStream(
   // (session is still usable for non-vision tools)
   const firstFrameTimeout = setTimeout(() => {
     if (!firstFrameReceived) {
-      console.error(`[scrcpy] [${session.serial}] Timeout waiting for first video frame, proceeding without it`)
+      const msg = `[scrcpy] [${session.serial}] Timeout waiting for` +
+        ` first video frame, proceeding without it`
+      console.error(msg)
       firstFrameReceived = true
       resolveFirstFrame?.()
     }
@@ -385,7 +387,9 @@ function startVideoStream(
       if (!firstFrameReceived) {
         firstFrameReceived = true
         clearTimeout(firstFrameTimeout)
-        console.error(`[scrcpy] [${session.serial}] First video frame received, session fully ready`)
+        const msg = `[scrcpy] [${session.serial}]` +
+          ` First video frame received, session fully ready`
+        console.error(msg)
         resolveFirstFrame?.()
       }
     }
@@ -911,7 +915,8 @@ export async function startSession(
     } catch (err) {
       // If the video stream fails to produce a frame, the session is still
       // usable for non-vision tools (key events, text input, etc.)
-      console.error(`[scrcpy] Video stream failed for ${s}, session partially ready:`, (err as Error).message)
+      const msg = `[scrcpy] Video stream failed for ${s}, session partially ready:`
+      console.error(msg, (err as Error).message)
     }
 
     controlSocket.on("close", () => {
