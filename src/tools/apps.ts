@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
-import { execAdbShell, resolveSerial } from "../utils/adb.js"
+import { execAdb, execAdbShell, resolveSerial } from "../utils/adb.js"
 import { hasActiveSession, startAppViaScrcpy } from "../utils/scrcpy.js"
 
 export function registerAppTools(server: McpServer): void {
@@ -86,6 +86,198 @@ export function registerAppTools(server: McpServer): void {
                 : `App started: ${actualPackageName}`,
               source: "adb",
             }),
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
+      }
+    }
+  )
+
+  server.registerTool(
+    "app_stop",
+    {
+      description: "Force-stop an app on the device.",
+      inputSchema: {
+        packageName: z.string().describe("Package name to force-stop (e.g., 'com.example.app')"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
+    },
+    async ({ packageName, serial }) => {
+      try {
+        const s = await resolveSerial(serial)
+        await execAdbShell(s, `am force-stop ${packageName}`)
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ success: true, message: `App stopped: ${packageName}` }),
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
+      }
+    }
+  )
+
+  server.registerTool(
+    "app_install",
+    {
+      description: "Install an APK file on the device from the host machine.",
+      inputSchema: {
+        apkPath: z.string().describe("Absolute path to the APK file on the host machine"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
+    },
+    async ({ apkPath, serial }) => {
+      try {
+        const s = await resolveSerial(serial)
+        const { stdout, stderr } = await execAdb(["-s", s, "install", "-r", apkPath])
+        const output = (stdout + stderr).trim()
+        const success = output.includes("Success")
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success,
+              message: success ? `APK installed: ${apkPath}` : output,
+            }),
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
+      }
+    }
+  )
+
+  server.registerTool(
+    "app_uninstall",
+    {
+      description: "Uninstall an app from the device.",
+      inputSchema: {
+        packageName: z.string().describe("Package name to uninstall (e.g., 'com.example.app')"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
+    },
+    async ({ packageName, serial }) => {
+      try {
+        const s = await resolveSerial(serial)
+        const { stdout, stderr } = await execAdb(["-s", s, "uninstall", packageName])
+        const output = (stdout + stderr).trim()
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ success: true, message: output || `App uninstalled: ${packageName}` }),
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
+      }
+    }
+  )
+
+  server.registerTool(
+    "app_list",
+    {
+      description: "List installed packages on the device. Optionally filter by name or restrict to system/third-party apps.",
+      inputSchema: {
+        filter: z.string().optional().describe("Filter packages by name (partial match, case-insensitive)"),
+        system: z.boolean().optional().describe("true = system apps only, false = third-party only, omit = all"),
+        serial: z.string().optional().describe("Device serial number"),
+      },
+    },
+    async ({ filter, system, serial }) => {
+      try {
+        const s = await resolveSerial(serial)
+        const args = ["pm", "list", "packages"]
+        if (system === true) {
+          args.push("-s")
+        } else if (system === false) {
+          args.push("-3")
+        }
+        const output = await execAdbShell(s, args.join(" "))
+        let packages = output
+          .split("\n")
+          .map((line) => line.replace(/^package:/, "").trim())
+          .filter(Boolean)
+        if (filter) {
+          const lowerFilter = filter.toLowerCase()
+          packages = packages.filter((p) => p.toLowerCase().includes(lowerFilter))
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ packages, count: packages.length }),
+          }],
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: true, message: err.message }),
+          }],
+        }
+      }
+    }
+  )
+
+  server.registerTool(
+    "app_current",
+    {
+      description: "Get the currently foregrounded app package name and activity.",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+      },
+    },
+    async ({ serial }) => {
+      try {
+        const s = await resolveSerial(serial)
+        const output = await execAdbShell(
+          s,
+          "dumpsys activity activities | grep mResumedActivity"
+        )
+        // Format: mResumedActivity: ActivityRecord{xxxx u0 com.pkg/.Activity t1}
+        const match = output.match(
+          /mResumedActivity[=: ]+ActivityRecord\{[^}]+\s+([^\s/}]+)(\/[^\s}]+)?/
+        )
+        if (!match) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: "Could not determine current activity" }),
+            }],
+          }
+        }
+        const packageName = match[1]
+        const activity = match[2] ?? null
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ packageName, activity }),
           }],
         }
       } catch (error) {

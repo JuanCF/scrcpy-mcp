@@ -170,12 +170,12 @@ Implement remaining tools that require ADB (scrcpy doesn't provide these).
 
 ### 3.1 App Management Tools (`src/tools/apps.ts`)
 
-- [ ] 3.1.1 Implement `app_start` - ADB `am start` (already done in 2.10, ensure fallback works)
-- [ ] 3.1.2 Implement `app_stop` - ADB `am force-stop`
-- [ ] 3.1.3 Implement `app_install` - ADB `install -r`
-- [ ] 3.1.4 Implement `app_uninstall` - ADB `uninstall`
-- [ ] 3.1.5 Implement `app_list` - ADB `pm list packages` with filtering
-- [ ] 3.1.6 Implement `app_current` - parse `dumpsys activity activities`
+- [x] 3.1.1 Implement `app_start` - ADB `am start` (already done in 2.10, ensure fallback works)
+- [x] 3.1.2 Implement `app_stop` - ADB `am force-stop`
+- [x] 3.1.3 Implement `app_install` - ADB `install -r`
+- [x] 3.1.4 Implement `app_uninstall` - ADB `uninstall`
+- [x] 3.1.5 Implement `app_list` - ADB `pm list packages` with filtering
+- [x] 3.1.6 Implement `app_current` - parse `dumpsys activity activities`
 
 ### 3.2 UI Automation Tools (`src/tools/ui.ts`)
 
