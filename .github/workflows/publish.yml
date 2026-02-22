@@ -1,91 +1,77 @@
-name: Publish to npm
+name: Publish
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Check if version changed
-        id: version_check
+      - name: Extract version from tag
+        id: version
         run: |
-          CURRENT=$(node -p "require('./package.json').version")
-          PREV_SHA="${{ github.event.before }}"
-          if git rev-parse --verify "$PREV_SHA" > /dev/null 2>&1 && git cat-file -e "$PREV_SHA:package.json" 2>/dev/null; then
-            PREVIOUS=$(git show "$PREV_SHA":package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
-          else
-            PREVIOUS=""
-          fi
-          echo "current=$CURRENT" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS" >> $GITHUB_OUTPUT
-          if [ "$CURRENT" != "$PREVIOUS" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Setup Node.js
-        if: steps.version_check.outputs.changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        if: steps.version_check.outputs.changed == 'true'
         run: npm ci
 
-      - name: Publish
-        if: steps.version_check.outputs.changed == 'true'
+      - name: Verify package.json version matches tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Tag version and package.json version do not match"
+            exit 1
+          fi
+
+      - name: Publish to npm (Trusted Publishing)
         run: npm publish --access public
 
+      # -----------------------------
+      # MCP REGISTRY SECTION
+      # -----------------------------
+
       - name: Install mcp-publisher
-        if: steps.version_check.outputs.changed == 'true'
         run: |
           MCP_VERSION="v1.4.1"
           VERSION_NUM="${MCP_VERSION#v}"
           OS=$(uname -s | tr '[:upper:]' '[:lower:]')
           ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
           TARBALL="mcp-publisher_${OS}_${ARCH}.tar.gz"
+
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_VERSION}/${TARBALL}" -o "${TARBALL}"
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_VERSION}/registry_${VERSION_NUM}_checksums.txt" -o checksums.txt
+
           grep "${TARBALL}" checksums.txt | sha256sum --check
           tar xzf "${TARBALL}" mcp-publisher
+
           rm "${TARBALL}" checksums.txt
 
       - name: Update server.json version
-        if: steps.version_check.outputs.changed == 'true'
         run: |
-          VERSION=${{ steps.version_check.outputs.current }}
-          jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp && mv server.tmp server.json
+          VERSION=${{ steps.version.outputs.version }}
+          jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp
+          mv server.tmp server.json
 
-      - name: Authenticate to MCP Registry
-        if: steps.version_check.outputs.changed == 'true'
+      - name: Authenticate to MCP Registry (OIDC)
         run: ./mcp-publisher login github-oidc
 
       - name: Publish to MCP Registry
-        if: steps.version_check.outputs.changed == 'true'
         run: ./mcp-publisher publish
-
-      - name: Create git tag
-        if: steps.version_check.outputs.changed == 'true'
-        run: |
-          TAG="v${{ steps.version_check.outputs.current }}"
-          if git rev-parse "refs/tags/$TAG" > /dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping."
-          else
-            git tag "$TAG"
-            git push origin "$TAG"
-          fi
