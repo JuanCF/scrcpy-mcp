@@ -31,28 +31,28 @@ jobs:
           fi
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS" >> $GITHUB_OUTPUT
-          if [ "$CURRENT" != "$PREVIOUS" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "$CURRENT" != "$PREVIOUS" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Setup Node.js
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install dependencies
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: npm ci
 
       - name: Publish
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: npm publish --provenance --access public
 
       - name: Install mcp-publisher
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           MCP_VERSION="v1.4.1"
           VERSION_NUM="${MCP_VERSION#v}"
@@ -66,21 +66,21 @@ jobs:
           rm "${TARBALL}" checksums.txt
 
       - name: Update server.json version
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           VERSION=${{ steps.version_check.outputs.current }}
           jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp && mv server.tmp server.json
 
       - name: Authenticate to MCP Registry
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: ./mcp-publisher login github-oidc
 
       - name: Publish to MCP Registry
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: ./mcp-publisher publish
 
       - name: Create git tag
-        if: steps.version_check.outputs.changed == 'true'
+        if: steps.version_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           TAG="v${{ steps.version_check.outputs.current }}"
           if git rev-parse "refs/tags/$TAG" > /dev/null 2>&1; then
