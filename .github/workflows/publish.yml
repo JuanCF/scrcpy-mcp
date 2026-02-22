@@ -49,7 +49,7 @@ jobs:
 
       - name: Publish
         if: steps.version_check.outputs.changed == 'true'
-        run: npm publish --provenance --access public
+        run: npm publish --access public
 
       - name: Install mcp-publisher
         if: steps.version_check.outputs.changed == 'true'
