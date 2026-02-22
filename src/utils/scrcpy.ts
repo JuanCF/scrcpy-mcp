@@ -616,6 +616,8 @@ const connectAndVerify = async (port: number, timeout = 10000): Promise<net.Sock
         if (chunk.length > 1) {
           socket.unshift(chunk.subarray(1))
         }
+        // Pause so data is buffered until the caller attaches its own handlers
+        socket.pause()
         resolve(socket)
       })
 
@@ -702,6 +704,8 @@ const receiveDeviceMeta = async (
 
     socket.on("data", onData)
     socket.on("error", onError)
+    // Resume the socket which was paused by connectAndVerify after the dummy byte
+    socket.resume()
   })
 
 const startDeviceMessageHandler = (session: ScrcpySession): void => {

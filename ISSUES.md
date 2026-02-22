@@ -118,7 +118,7 @@ input sent over the same socket work fine, confirming the control channel is hea
 **Binary layout:** The MCP serializes touch events as a 32-byte message matching the
 scrcpy protocol:
 
-```
+```text
 Offset  Size  Field
   0       1   msg type (2 = INJECT_TOUCH_EVENT)
   1       1   action (0=DOWN, 1=UP)
