@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from "child_process"
+import { spawn, execSync, ChildProcess } from "child_process"
 import * as net from "net"
 import * as path from "path"
 import * as fs from "fs"
@@ -28,6 +28,11 @@ import {
   JPEG_EOI,
   DEVICE_MSG_TYPE_CLIPBOARD,
   MAX_CLIPBOARD_BYTES,
+  CLIPBOARD_COPY_KEY_NONE,
+  DEVICE_META_SIZE,
+  DEVICE_NAME_OFFSET,
+  VIDEO_WIDTH_OFFSET,
+  VIDEO_HEIGHT_OFFSET,
 } from "./constants.js"
 
 export function serializeInjectKeycode(
@@ -141,9 +146,7 @@ export function serializeCollapsePanels(): Buffer {
   return Buffer.from([CONTROL_MSG_TYPE_COLLAPSE_PANELS])
 }
 
-export const CLIPBOARD_COPY_KEY_NONE = 0
-export const CLIPBOARD_COPY_KEY_COPY = 1
-export const CLIPBOARD_COPY_KEY_CUT = 2
+
 
 export function serializeGetClipboard(copyKey = CLIPBOARD_COPY_KEY_NONE): Buffer {
   const buffer = Buffer.alloc(2)
@@ -259,6 +262,7 @@ export interface ScrcpySessionOptions {
 
 export interface ScrcpySession {
   serial: string
+  scid: number
   controlSocket: net.Socket | null
   videoSocket: net.Socket | null
   videoProcess: ChildProcess | null
@@ -290,16 +294,22 @@ const findFfmpeg = (): string => {
   return "ffmpeg"
 }
 
-function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void {
+function startVideoStream(
+  session: ScrcpySession,
+  videoSocket: net.Socket,
+  initialData?: Buffer
+): void {
   const ffmpegPath = findFfmpeg()
   
   const ffmpeg = spawn(ffmpegPath, [
+    "-probesize", "1024",
+    "-flags", "low_delay",
     "-f", "h264",
     "-i", "pipe:0",
     "-f", "image2pipe",
     "-vcodec", "mjpeg",
     "-q:v", "5",
-    "-vf", "fps=30",
+    "-flush_packets", "1",
     "pipe:1",
   ])
 
@@ -401,6 +411,10 @@ function startVideoStream(session: ScrcpySession, videoSocket: net.Socket): void
       videoSocket.unpipe()
     })
 
+    // Write any overflow bytes from the metadata read before piping
+    if (initialData && initialData.length > 0) {
+      ffmpeg.stdin.write(initialData)
+    }
     videoSocket.pipe(ffmpeg.stdin)
   }
 }
@@ -430,12 +444,59 @@ export function findScrcpyServer(): string | null {
   return null
 }
 
+/**
+ * Detect the installed scrcpy version by running `scrcpy --version`.
+ * Falls back to the SCRCPY_SERVER_VERSION constant if detection fails.
+ */
+export function detectScrcpyVersion(): string {
+  const envVersion = process.env.SCRCPY_SERVER_VERSION
+  if (envVersion) {
+    return envVersion
+  }
+
+  try {
+    const output = execSync("scrcpy --version 2>/dev/null", {
+      timeout: 5000,
+      encoding: "utf8",
+    })
+    // Output format: "scrcpy 2.7 <https://github.com/Genymobile/scrcpy>"
+    // or: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>"
+    const match = output.match(/scrcpy\s+(\d+\.\d+(?:\.\d+)?)/)
+    if (match) {
+      return match[1]
+    }
+  } catch {
+    // scrcpy CLI not available, fall through
+  }
+
+  return SCRCPY_SERVER_VERSION
+}
+
+function generateScid(): number {
+  // Generate a random 31-bit positive integer (scrcpy uses hex format)
+  return Math.floor(Math.random() * 0x7FFFFFFF) + 1
+}
+
+function getSocketName(scid: number): string {
+  if (scid === -1) {
+    return "scrcpy"
+  }
+  return `scrcpy_${scid.toString(16).padStart(8, "0")}`
+}
+
 export async function pushScrcpyServer(serial: string, serverPath: string): Promise<void> {
   await execAdb(["-s", serial, "push", serverPath, SCRCPY_SERVER_PATH_LOCAL], 30000)
 }
 
-export async function setupPortForwarding(serial: string, port: number): Promise<void> {
-  await execAdb(["-s", serial, "forward", `tcp:${port}`, "localabstract:scrcpy"])
+export async function setupPortForwarding(
+  serial: string,
+  port: number,
+  scid: number
+): Promise<void> {
+  const socketName = getSocketName(scid)
+  await execAdb(
+    ["-s", serial, "forward", `tcp:${port}`, `localabstract:${socketName}`]
+  )
 }
 
 export async function removePortForwarding(serial: string, port: number): Promise<void> {
@@ -448,6 +509,7 @@ export async function removePortForwarding(serial: string, port: number): Promis
 
 export async function startScrcpyServer(
   serial: string,
+  scid: number,
   options: ScrcpySessionOptions = {}
 ): Promise<void> {
   const {
@@ -456,13 +518,17 @@ export async function startScrcpyServer(
     videoBitRate = 8000000,
   } = options
 
+  const version = detectScrcpyVersion()
+  console.error(`[scrcpy] Using scrcpy server version: ${version}`)
+
   const serverArgs = [
     "-s", serial, "shell",
     `CLASSPATH=${SCRCPY_SERVER_PATH_LOCAL}`,
     "app_process",
     "/",
     "com.genymobile.scrcpy.Server",
-    SCRCPY_SERVER_VERSION,
+    version,
+    `scid=${scid.toString(16).padStart(8, "0")}`,
     `log_level=debug`,
     `max_size=${maxSize}`,
     `max_fps=${maxFps}`,
@@ -485,8 +551,17 @@ export async function startScrcpyServer(
   return new Promise((resolve, reject) => {
     const child = spawn(ADB_PATH, serverArgs, {
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
     })
+
+    if (child.stderr) {
+      child.stderr.on("data", (data: Buffer) => {
+        const msg = data.toString().trim()
+        if (msg) {
+          console.error(`[scrcpy-server] ${msg}`)
+        }
+      })
+    }
 
     child.once("error", (err) => {
       reject(new Error(
@@ -502,8 +577,53 @@ export async function startScrcpyServer(
   })
 }
 
-const readUint16BE = (buffer: Buffer, offset: number): number =>
-  buffer.readUInt16BE(offset)
+
+
+// In forward tunnel mode, `adb forward` accepts TCP connections even when no
+// server is listening behind the tunnel. To detect that the server is actually
+// ready we read the dummy byte (sent by scrcpy with send_dummy_byte=true) after
+// the TCP connection is established. If the read fails, the server is not ready.
+const connectAndVerify = async (port: number, timeout = 10000): Promise<net.Socket> =>
+  new Promise((resolve, reject) => {
+    const socket = net.createConnection({ port, host: "127.0.0.1" })
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      reject(new Error(`Connection timeout to port ${port}`))
+    }, timeout)
+
+    const fail = (err: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      socket.destroy()
+      reject(err)
+    }
+
+    socket.on("error", (err) => fail(
+      new Error(`Socket error connecting to port ${port}`, { cause: err })
+    ))
+
+    socket.on("connect", () => {
+      // TCP connected to the ADB tunnel. Now read the dummy byte to verify
+      // the scrcpy server is actually listening behind the tunnel.
+      socket.once("data", (chunk: Buffer) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (chunk.length > 1) {
+          socket.unshift(chunk.subarray(1))
+        }
+        resolve(socket)
+      })
+
+      socket.once("close", () => fail(
+        new Error("Socket closed before dummy byte received")
+      ))
+    })
+  })
 
 const connectToServer = async (port: number, timeout = 10000): Promise<net.Socket> =>
   new Promise((resolve, reject) => {
@@ -524,31 +644,49 @@ const connectToServer = async (port: number, timeout = 10000): Promise<net.Socke
     })
   })
 
+interface DeviceMetaResult {
+  width: number
+  height: number
+  overflow: Buffer
+}
+
 const receiveDeviceMeta = async (
   socket: net.Socket,
   port: number
-): Promise<{ width: number; height: number }> =>
+): Promise<DeviceMetaResult> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       socket.off("data", onData)
       socket.off("error", onError)
       reject(new Error(`Timeout waiting for device metadata on port ${port}`))
-    }, 5000)
+    }, 10000)
 
     let buffer = Buffer.alloc(0)
 
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk])
 
-      if (buffer.length >= 68) {
+      if (buffer.length >= DEVICE_META_SIZE) {
         clearTimeout(timer)
         socket.off("data", onData)
         socket.off("error", onError)
 
-        const width = readUint16BE(buffer, 5)
-        const height = readUint16BE(buffer, 7)
-        
-        resolve({ width, height })
+        const deviceName = buffer
+          .subarray(DEVICE_NAME_OFFSET, DEVICE_NAME_OFFSET + 64)
+          .toString("utf8")
+          .replace(/\0+$/, "")
+        console.error(`[scrcpy] Device name: ${deviceName}`)
+
+        const width = buffer.readUInt32BE(VIDEO_WIDTH_OFFSET)
+        const height = buffer.readUInt32BE(VIDEO_HEIGHT_OFFSET)
+        console.error(`[scrcpy] Screen size: ${width}x${height}`)
+
+        // Any bytes beyond the metadata are the start of the h264 stream
+        const overflow = buffer.length > DEVICE_META_SIZE
+          ? Buffer.from(buffer.subarray(DEVICE_META_SIZE))
+          : Buffer.alloc(0)
+
+        resolve({ width, height, overflow })
       }
     }
 
@@ -625,10 +763,11 @@ export async function startSession(
   await pushScrcpyServer(s, serverPath)
 
   const port = SCRCPY_SERVER_PORT
-  await setupPortForwarding(s, port)
+  const scid = generateScid()
+  await setupPortForwarding(s, port, scid)
 
   try {
-    await startScrcpyServer(s, options)
+    await startScrcpyServer(s, scid, options)
   } catch (err) {
     await removePortForwarding(s, port)
     throw err
@@ -640,9 +779,12 @@ export async function startSession(
   let socket: net.Socket | null = null
   let lastError: Error | null = null
 
+  // In forward tunnel mode, adb forward accepts TCP connections even when
+  // the server hasn't created its LocalServerSocket yet. connectAndVerify
+  // reads the dummy byte after TCP connect to confirm the server is live.
   while (Date.now() < deadline) {
     try {
-      socket = await connectToServer(port)
+      socket = await connectAndVerify(port, 2000)
       break
     } catch (err) {
       lastError = err as Error
@@ -669,23 +811,10 @@ export async function startSession(
 
   let session: ScrcpySession | null = null
   try {
-    const screenSize = await receiveDeviceMeta(socket, port)
-
-    session = {
-      serial: s,
-      controlSocket: null,
-      videoSocket: socket,
-      videoProcess: null,
-      frameBuffer: null,
-      screenSize,
-      clipboardContent: null,
-    }
-
-    const currentSession = session
-    sessions.set(s, currentSession)
-
-    startVideoStream(currentSession, socket)
-
+    // In forward tunnel mode the server accepts sockets in order:
+    // video, then control. It only sends device metadata AFTER all
+    // sockets have been accepted. So we must connect both sockets
+    // before attempting to read the metadata from the video socket.
     let controlSocket: net.Socket | null = null
     let lastControlError: Error | null = null
     const controlConnectDeadline = Date.now() + 5000
@@ -703,18 +832,31 @@ export async function startSession(
 
     if (!controlSocket) {
       socket.destroy()
-      if (currentSession.videoProcess) {
-        currentSession.videoProcess.kill()
-        currentSession.videoProcess = null
-      }
-      sessions.delete(s)
       throw new Error(
         `Failed to connect control socket on port ${port} for device ${s} within timeout`,
         { cause: lastControlError }
       )
     }
 
-    currentSession.controlSocket = controlSocket
+    // Now that both sockets are connected, the server will proceed
+    // to send device metadata on the video socket.
+    const { width, height, overflow } = await receiveDeviceMeta(socket, port)
+
+    session = {
+      serial: s,
+      scid,
+      controlSocket,
+      videoSocket: socket,
+      videoProcess: null,
+      frameBuffer: null,
+      screenSize: { width, height },
+      clipboardContent: null,
+    }
+
+    const currentSession = session
+    sessions.set(s, currentSession)
+
+    startVideoStream(currentSession, socket, overflow)
 
     controlSocket.on("close", () => {
       currentSession.controlSocket = null

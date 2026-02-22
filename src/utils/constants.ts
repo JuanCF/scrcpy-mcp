@@ -6,10 +6,10 @@ export const SCRCPY_SERVER_PORT = 27183
 
 export const SCRCPY_SERVER_PATH_LOCAL = "/data/local/tmp/scrcpy-server.jar"
 
-export const SCRCPY_SERVER_VERSION = process.env.SCRCPY_SERVER_VERSION || "2.7"
+export const SCRCPY_SERVER_VERSION = process.env.SCRCPY_SERVER_VERSION || "3.3.4"
 
 /**
- * scrcpy Control Message Types
+ * scrcpy Control Message Types (v3.x)
  *
  * These are the message type identifiers sent over the control socket to the
  * scrcpy server running on the Android device. Each control message starts
@@ -22,14 +22,20 @@ export const CONTROL_MSG_TYPE_INJECT_KEYCODE = 0
 export const CONTROL_MSG_TYPE_INJECT_TEXT = 1
 export const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2
 export const CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT = 3
-export const CONTROL_MSG_TYPE_SET_DISPLAY_POWER = 4
+export const CONTROL_MSG_TYPE_BACK_OR_SCREEN_ON = 4
 export const CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL = 5
 export const CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL = 6
 export const CONTROL_MSG_TYPE_COLLAPSE_PANELS = 7
 export const CONTROL_MSG_TYPE_GET_CLIPBOARD = 8
 export const CONTROL_MSG_TYPE_SET_CLIPBOARD = 9
-export const CONTROL_MSG_TYPE_ROTATE_DEVICE = 10
+export const CONTROL_MSG_TYPE_SET_DISPLAY_POWER = 10
+export const CONTROL_MSG_TYPE_ROTATE_DEVICE = 11
+export const CONTROL_MSG_TYPE_UHID_CREATE = 12
+export const CONTROL_MSG_TYPE_UHID_INPUT = 13
+export const CONTROL_MSG_TYPE_UHID_DESTROY = 14
+export const CONTROL_MSG_TYPE_OPEN_HARD_KEYBOARD_SETTINGS = 15
 export const CONTROL_MSG_TYPE_START_APP = 16
+export const CONTROL_MSG_TYPE_RESET_VIDEO = 17
 
 export const DEVICE_MSG_TYPE_CLIPBOARD = 0
 
@@ -92,3 +98,29 @@ export const JPEG_EOI = 0xffd9
 export const MAX_JPEG_BUFFER_SIZE = 10 * 1024 * 1024
 
 export const MAX_CLIPBOARD_BYTES = 1024 * 1024
+
+/**
+ * Clipboard Copy Keys
+ *
+ * Used with GET_CLIPBOARD to optionally trigger a copy or cut before reading.
+ */
+export const CLIPBOARD_COPY_KEY_NONE = 0
+export const CLIPBOARD_COPY_KEY_COPY = 1
+export const CLIPBOARD_COPY_KEY_CUT = 2
+
+/**
+ * scrcpy handshake protocol constants for the video socket.
+ *
+ * In forward tunnel mode with send_dummy_byte=true, send_device_meta=true,
+ * send_codec_meta=true, the video socket receives (after the dummy byte
+ * which is consumed during connection verification):
+ *   Device name: 64 bytes (offset 0..63)
+ *   Codec ID:    4 bytes u32be (offset 64..67)
+ *   Width:       4 bytes u32be (offset 68..71)
+ *   Height:      4 bytes u32be (offset 72..75)
+ * Total after dummy byte: 76 bytes
+ */
+export const DEVICE_META_SIZE = 76
+export const DEVICE_NAME_OFFSET = 0
+export const VIDEO_WIDTH_OFFSET = 68
+export const VIDEO_HEIGHT_OFFSET = 72
