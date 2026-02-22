@@ -3,6 +3,10 @@ import { z } from "zod"
 import { execAdb, execAdbShell, resolveSerial } from "../utils/adb.js"
 import { hasActiveSession, startAppViaScrcpy } from "../utils/scrcpy.js"
 
+function isValidPackageName(name: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9_.]*$/.test(name)
+}
+
 export function registerAppTools(server: McpServer): void {
   server.registerTool(
     "app_start",
@@ -26,6 +30,15 @@ export function registerAppTools(server: McpServer): void {
             content: [{
               type: "text",
               text: JSON.stringify({ error: true, message: "Package name is required" }),
+            }],
+          }
+        }
+
+        if (!isValidPackageName(actualPackageName)) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Invalid package name: ${actualPackageName}` }),
             }],
           }
         }
@@ -112,6 +125,14 @@ export function registerAppTools(server: McpServer): void {
     async ({ packageName, serial }) => {
       try {
         const s = await resolveSerial(serial)
+        if (!isValidPackageName(packageName)) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Invalid package name: ${packageName}` }),
+            }],
+          }
+        }
         await execAdbShell(s, `am force-stop ${packageName}`)
         return {
           content: [{
@@ -181,10 +202,14 @@ export function registerAppTools(server: McpServer): void {
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "uninstall", packageName])
         const output = (stdout + stderr).trim()
+        const success = !output.startsWith("Failure") && !output.includes("DELETE_FAILED")
         return {
           content: [{
             type: "text",
-            text: JSON.stringify({ success: true, message: output || `App uninstalled: ${packageName}` }),
+            text: JSON.stringify({
+              success,
+              message: success ? (output || `App uninstalled: ${packageName}`) : output,
+            }),
           }],
         }
       } catch (error) {
