@@ -50,6 +50,34 @@ jobs:
         if: steps.version_check.outputs.changed == 'true'
         run: npm publish --provenance --access public
 
+      - name: Install mcp-publisher
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          MCP_VERSION="v1.4.1"
+          VERSION_NUM="${MCP_VERSION#v}"
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          TARBALL="mcp-publisher_${OS}_${ARCH}.tar.gz"
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_VERSION}/${TARBALL}" -o "${TARBALL}"
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_VERSION}/registry_${VERSION_NUM}_checksums.txt" -o checksums.txt
+          grep "${TARBALL}" checksums.txt | sha256sum --check
+          tar xzf "${TARBALL}" mcp-publisher
+          rm "${TARBALL}" checksums.txt
+
+      - name: Update server.json version
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          VERSION=${{ steps.version_check.outputs.current }}
+          jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp && mv server.tmp server.json
+
+      - name: Authenticate to MCP Registry
+        if: steps.version_check.outputs.changed == 'true'
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        if: steps.version_check.outputs.changed == 'true'
+        run: ./mcp-publisher publish
+
       - name: Create git tag
         if: steps.version_check.outputs.changed == 'true'
         run: |
