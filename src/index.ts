@@ -9,6 +9,8 @@ import { registerInputTools } from "./tools/input.js"
 import { registerAppTools } from "./tools/apps.js"
 import { registerClipboardTools } from "./tools/clipboard.js"
 import { registerUiTools } from "./tools/ui.js"
+import { registerShellTools } from "./tools/shell.js"
+import { registerFileTools } from "./tools/files.js"
 
 const server = new McpServer({
   name: "scrcpy-mcp",
@@ -22,6 +24,8 @@ registerInputTools(server)
 registerAppTools(server)
 registerClipboardTools(server)
 registerUiTools(server)
+registerShellTools(server)
+registerFileTools(server)
 
 async function main() {
   const transport = new StdioServerTransport()

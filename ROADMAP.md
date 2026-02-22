@@ -202,24 +202,24 @@ Complete the tool set with shell, file, and remaining device tools.
 
 ### 4.1 Shell Tools (`src/tools/shell.ts`)
 
-- [ ] 4.1.1 Implement `shell_exec` - arbitrary ADB shell command execution
+- [x] 4.1.1 Implement `shell_exec` - arbitrary ADB shell command execution
 
 ### 4.2 File Transfer Tools (`src/tools/files.ts`)
 
-- [ ] 4.2.1 Implement `file_push` - ADB `push`
-- [ ] 4.2.2 Implement `file_pull` - ADB `pull`
-- [ ] 4.2.3 Implement `file_list` - ADB `ls -la` with parsing
+- [x] 4.2.1 Implement `file_push` - ADB `push`
+- [x] 4.2.2 Implement `file_pull` - ADB `pull`
+- [x] 4.2.3 Implement `file_list` - ADB `ls -la` with parsing
 
 ### 4.3 Screen Recording Tools (update `src/tools/vision.ts`)
 
-- [ ] 4.3.1 Ensure `screen_record_start` works via ADB `screenrecord`
-- [ ] 4.3.2 Ensure `screen_record_stop` properly terminates recording
+- [x] 4.3.1 Ensure `screen_record_start` works via ADB `screenrecord`
+- [x] 4.3.2 Ensure `screen_record_stop` properly terminates recording
 
 ### 4.4 Testing
 
-- [ ] 4.4.1 Test shell_exec with various commands
-- [ ] 4.4.2 Test file push/pull
-- [ ] 4.4.3 Test screen recording
+- [x] 4.4.1 Test shell_exec with various commands
+- [x] 4.4.2 Test file push/pull
+- [x] 4.4.3 Test screen recording
 
 **Phase 4 Milestone:** All 34 tools implemented.
 
