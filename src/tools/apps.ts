@@ -5,7 +5,7 @@ import { z } from "zod"
 import { execAdb, execAdbShell, resolveSerial } from "../utils/adb.js"
 import { hasActiveSession, startAppViaScrcpy } from "../utils/scrcpy.js"
 
-function isValidPackageName(name: string): boolean {
+export function isValidPackageName(name: string): boolean {
   return /^(?:[A-Za-z][A-Za-z0-9_]*)(?:\.(?:[A-Za-z][A-Za-z0-9_]*))+$/.test(name)
 }
 

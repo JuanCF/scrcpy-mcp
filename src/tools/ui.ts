@@ -13,7 +13,7 @@ interface UiElement {
   clickable: boolean
 }
 
-function parseUiNodes(xml: string): UiElement[] {
+export function parseUiNodes(xml: string): UiElement[] {
   const elements: UiElement[] = []
   const nodeRegex = /<node\s([^>]+?)(?:\/>|>)/gs
   let match: RegExpExecArray | null
