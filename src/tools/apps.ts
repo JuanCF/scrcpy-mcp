@@ -1,10 +1,12 @@
+import * as path from "path"
+import * as fs from "fs"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import { execAdb, execAdbShell, resolveSerial } from "../utils/adb.js"
 import { hasActiveSession, startAppViaScrcpy } from "../utils/scrcpy.js"
 
 function isValidPackageName(name: string): boolean {
-  return /^[a-zA-Z][a-zA-Z0-9_.]*$/.test(name)
+  return /^(?:[A-Za-z][A-Za-z0-9_]*)(?:\.(?:[A-Za-z][A-Za-z0-9_]*))+$/.test(name)
 }
 
 export function registerAppTools(server: McpServer): void {
@@ -163,6 +165,14 @@ export function registerAppTools(server: McpServer): void {
     },
     async ({ apkPath, serial }) => {
       try {
+        if (!apkPath.endsWith(".apk") || !path.isAbsolute(apkPath) || !fs.existsSync(apkPath)) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: "Invalid apkPath: must be an absolute path to a .apk file" }),
+            }],
+          }
+        }
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "install", "-r", apkPath])
         const output = (stdout + stderr).trim()
@@ -199,6 +209,14 @@ export function registerAppTools(server: McpServer): void {
     },
     async ({ packageName, serial }) => {
       try {
+        if (!isValidPackageName(packageName)) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: `Invalid package name: ${packageName}` }),
+            }],
+          }
+        }
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "uninstall", packageName])
         const output = (stdout + stderr).trim()
