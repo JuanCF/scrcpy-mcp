@@ -256,10 +256,7 @@ export function registerAppTools(server: McpServer): void {
     async ({ serial }) => {
       try {
         const s = await resolveSerial(serial)
-        const output = await execAdbShell(
-          s,
-          "dumpsys activity activities | grep mResumedActivity"
-        )
+        const output = await execAdbShell(s, "dumpsys activity activities")
         // Format: mResumedActivity: ActivityRecord{xxxx u0 com.pkg/.Activity t1}
         const match = output.match(
           /mResumedActivity[=: ]+ActivityRecord\{[^}]+\s+([^\s/}]+)(\/[^\s}]+)?/
