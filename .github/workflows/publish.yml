@@ -59,7 +59,7 @@ jobs:
           TARBALL="mcp-publisher_${OS}_${ARCH}.tar.gz"
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_VERSION}/${TARBALL}" -o "${TARBALL}"
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_VERSION}/registry_${VERSION_NUM}_checksums.txt" -o checksums.txt
-          grep "${TARBALL}" checksums.txt | sha256sum --check
+          grep "^[a-f0-9]*  ${TARBALL}$" checksums.txt | sha256sum --check
           tar xzf "${TARBALL}" mcp-publisher
           rm "${TARBALL}" checksums.txt
       - name: Update server.json version
