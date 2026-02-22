@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix-npm-trusted-publisher
   workflow_dispatch:
 
 jobs:
