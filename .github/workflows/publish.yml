@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -29,7 +30,7 @@ jobs:
           fi
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS" >> $GITHUB_OUTPUT
-          if [ "$CURRENT" != "$PREVIOUS" ]; then
+          if [ "$CURRENT" != "$PREVIOUS" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "changed=false" >> $GITHUB_OUTPUT
