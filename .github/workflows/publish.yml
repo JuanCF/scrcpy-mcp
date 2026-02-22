@@ -22,7 +22,7 @@ jobs:
         run: |
           CURRENT=$(node -p "require('./package.json').version")
           PREV_SHA="${{ github.event.before }}"
-          if git rev-parse --verify "$PREV_SHA" > /dev/null 2>&1; then
+          if git rev-parse --verify "$PREV_SHA" > /dev/null 2>&1 && git cat-file -e "$PREV_SHA:package.json" 2>/dev/null; then
             PREVIOUS=$(git show "$PREV_SHA":package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
           else
             PREVIOUS=""
