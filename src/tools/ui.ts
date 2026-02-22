@@ -50,7 +50,7 @@ export function parseUiNodes(xml: string): UiElement[] {
 }
 
 async function dumpUiXml(serial: string): Promise<string> {
-  const tmpPath = "/sdcard/.ui_dump_tmp.xml"
+  const tmpPath = `/sdcard/.ui_dump_${Date.now()}_${Math.random().toString(36).slice(2)}.xml`
   const raw = await execAdbShell(
     serial,
     `uiautomator dump ${tmpPath} 2>/dev/null; cat ${tmpPath}; rm -f ${tmpPath}`
