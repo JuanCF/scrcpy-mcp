@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.JuanCF/scrcpy-mcp",
-  "description": "MCP server for Android device control via ADB and scrcpy — gives AI agents vision and control over Android devices",
+  "description": "MCP server for Android device control via ADB and scrcpy",
   "repository": {
     "url": "https://github.com/JuanCF/scrcpy-mcp",
     "source": "github"
