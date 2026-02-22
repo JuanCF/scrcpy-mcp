@@ -50,6 +50,25 @@ jobs:
         if: steps.version_check.outputs.changed == 'true'
         run: npm publish --provenance --access public
 
+      - name: Install mcp-publisher
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Update server.json version
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          VERSION=${{ steps.version_check.outputs.current }}
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
+
+      - name: Authenticate to MCP Registry
+        if: steps.version_check.outputs.changed == 'true'
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        if: steps.version_check.outputs.changed == 'true'
+        run: ./mcp-publisher publish
+
       - name: Create git tag
         if: steps.version_check.outputs.changed == 'true'
         run: |

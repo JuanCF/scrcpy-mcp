@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.JuanCF/scrcpy-mcp",
+  "description": "MCP server for Android device control via ADB and scrcpy — gives AI agents vision and control over Android devices",
+  "repository": {
+    "url": "https://github.com/JuanCF/scrcpy-mcp",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "scrcpy-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ANDROID_SERIAL",
+          "description": "Target device serial number (from `adb devices`). Required when multiple devices are connected.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "ADB_PATH",
+          "description": "Custom path to the adb binary. Defaults to 'adb' on PATH.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "SCRCPY_SERVER_PATH",
+          "description": "Path to the scrcpy-server.jar file. Only needed if not installed in a standard location.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

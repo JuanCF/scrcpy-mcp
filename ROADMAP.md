@@ -248,12 +248,15 @@ Prepare for distribution.
 - [x] 5.2.4 Test on real Android device
 - [x] 5.2.5 Test both scrcpy path and ADB fallback
 
-### 5.3 Optional: Smithery Listing
+### 5.3 Registry Listings
 
-- [ ] 5.3.1 Create smithery.yaml
-- [ ] 5.3.2 Submit to smithery.ai
+- [ ] 5.3.1 Create `smithery.yaml` and submit to [smithery.ai](https://smithery.ai)
+- [ ] 5.3.2 Submit to the [Official MCP Registry](https://registry.modelcontextprotocol.io):
+  - Build publisher CLI: `make publisher`
+  - Authenticate via GitHub OAuth
+  - Publish as `io.github.JuanCF/scrcpy-mcp`
 
-**Phase 5 Milestone:** Published on npm, installable via `npx scrcpy-mcp`.
+**Phase 5 Milestone:** Published on npm, installable via `npx scrcpy-mcp`, listed on Smithery and the official MCP Registry.
 
 ---
 
