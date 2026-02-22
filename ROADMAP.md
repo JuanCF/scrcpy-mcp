@@ -231,43 +231,27 @@ Prepare for distribution.
 
 ### 5.1 Documentation
 
-- [ ] 5.1.1 Write comprehensive README.md with:
+- [x] 5.1.1 Write comprehensive README.md with:
   - Installation instructions
   - Prerequisites (ADB, optional scrcpy/ffmpeg)
   - MCP client configuration examples (OpenCode, Claude Code, Cursor, etc.)
   - Tool reference with examples
   - Performance comparison (scrcpy vs ADB)
   - Troubleshooting guide
-- [ ] 5.1.2 Add MIT LICENSE file
+- [x] 5.1.2 Add MIT LICENSE file
 
-### 5.2 Git Repository
+### 5.2 Build Verification
 
-- [ ] 5.2.1 Initialize git repository
-- [ ] 5.2.2 Create initial commit
-- [ ] 5.2.3 Create GitHub repository
-- [ ] 5.2.4 Push to GitHub
-- [ ] 5.2.5 Add topics: mcp, mcp-server, android, adb, scrcpy
+- [x] 5.2.1 Run full build: `npm run build`
+- [x] 5.2.2 Verify dist/ output
+- [x] 5.2.3 Test with MCP Inspector - all 34 tools
+- [x] 5.2.4 Test on real Android device
+- [x] 5.2.5 Test both scrcpy path and ADB fallback
 
-### 5.3 Build Verification
+### 5.3 Optional: Smithery Listing
 
-- [ ] 5.3.1 Run full build: `npm run build`
-- [ ] 5.3.2 Verify dist/ output
-- [ ] 5.3.3 Test with MCP Inspector - all 34 tools
-- [ ] 5.3.4 Test on real Android device
-- [ ] 5.3.5 Test both scrcpy path and ADB fallback
-
-### 5.4 npm Publishing
-
-- [ ] 5.4.1 Create npm account if needed
-- [ ] 5.4.2 Login: `npm login`
-- [ ] 5.4.3 Verify package.json is correct
-- [ ] 5.4.4 Publish: `npm publish`
-- [ ] 5.4.5 Test installation: `npx scrcpy-mcp`
-
-### 5.5 Optional: Smithery Listing
-
-- [ ] 5.5.1 Create smithery.yaml
-- [ ] 5.5.2 Submit to smithery.ai
+- [ ] 5.3.1 Create smithery.yaml
+- [ ] 5.3.2 Submit to smithery.ai
 
 **Phase 5 Milestone:** Published on npm, installable via `npx scrcpy-mcp`.
 
@@ -308,7 +292,7 @@ Enable watching the device screen in real-time while MCP controls it.
 | 2 | 2.1 - 2.11 | scrcpy integration | 10-50x faster input, instant screenshots |
 | 3 | 3.1 - 3.3 | App + UI tools | Complete app management and UI automation |
 | 4 | 4.1 - 4.4 | Remaining tools | Shell, files, recording |
-| 5 | 5.1 - 5.5 | Polish & publish | npm package, README, GitHub repo |
+| 5 | 5.1 - 5.3 | Polish & publish | npm package, README |
 
 **Total steps:** 80+ individual tasks
 **Estimated time:** 6-8 hours of focused work
