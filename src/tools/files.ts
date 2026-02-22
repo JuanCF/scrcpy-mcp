@@ -23,7 +23,7 @@ export function parseLsOutput(output: string): FileEntry[] {
     // Matches: permissions links owner group size YYYY-MM-DD HH:MM name
     // Handles optional SELinux suffix (. or +) on permissions field
     const match = trimmed.match(
-      /^([dlbcsp-][rwxst-]{9}[+.]?)\s+\d+\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+)$/
+      /^([dlbcsp-][rwxst-]{9}[+.]?)\s+\d+\s+(\S+)\s+(\S+)\s+(\d+(?:,\s*\d+)?)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s+(.+)$/
     )
     if (!match) continue
 
@@ -36,7 +36,7 @@ export function parseLsOutput(output: string): FileEntry[] {
       permissions,
       owner,
       group,
-      size: parseInt(sizeStr, 10),
+      size: sizeStr.includes(",") ? 0 : parseInt(sizeStr, 10),
       date,
       isDirectory: permissions.startsWith("d"),
     })
@@ -147,7 +147,8 @@ export function registerFileTools(server: McpServer): void {
     async ({ path: devicePath, serial }) => {
       try {
         const s = await resolveSerial(serial)
-        const output = await execAdbShell(s, `ls -la "${devicePath}"`)
+        const safePath = devicePath.replace(/'/g, "'\\''")
+        const output = await execAdbShell(s, `ls -la '${safePath}'`)
         const entries = parseLsOutput(output)
         return {
           content: [{
