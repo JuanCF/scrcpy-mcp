@@ -15,13 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check if version changed
         id: version_check
         run: |
           CURRENT=$(node -p "require('./package.json').version")
-          PREVIOUS=$(git show HEAD~1:package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
+          PREV_SHA="${{ github.event.before }}"
+          if git rev-parse --verify "$PREV_SHA" > /dev/null 2>&1; then
+            PREVIOUS=$(git show "$PREV_SHA":package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version")
+          else
+            PREVIOUS=""
+          fi
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS" >> $GITHUB_OUTPUT
           if [ "$CURRENT" != "$PREVIOUS" ]; then
@@ -48,5 +53,10 @@ jobs:
       - name: Create git tag
         if: steps.version_check.outputs.changed == 'true'
         run: |
-          git tag "v${{ steps.version_check.outputs.current }}"
-          git push origin "v${{ steps.version_check.outputs.current }}"
+          TAG="v${{ steps.version_check.outputs.current }}"
+          if git rev-parse "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
