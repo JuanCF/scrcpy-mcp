@@ -149,16 +149,16 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 
 ### 2.10 Wire scrcpy Fast Path - App Tools
 
-- [ ] 2.10.1 Update `app_start` - use scrcpy START_APP when session active
-- [ ] 2.10.2 Support force-stop prefix (+) via scrcpy
+- [x] 2.10.1 Update `app_start` - use scrcpy START_APP when session active
+- [x] 2.10.2 Support force-stop prefix (+) via scrcpy
 
 ### 2.11 Testing
 
-- [ ] 2.11.1 Test scrcpy session start/stop
-- [ ] 2.11.2 Test screenshot speed: compare scrcpy (~33ms) vs ADB (~500ms)
-- [ ] 2.11.3 Test input speed: compare scrcpy (~5-10ms) vs ADB (~100-300ms)
-- [ ] 2.11.4 Test clipboard on Android 10+ (should work with scrcpy, fail with ADB)
-- [ ] 2.11.5 Test expand_notifications (only works with scrcpy)
+- [x] 2.11.1 Test scrcpy session start/stop
+- [x] 2.11.2 Test screenshot speed: compare scrcpy (~33ms) vs ADB (~500ms)
+- [x] 2.11.3 Test input speed: compare scrcpy (~5-10ms) vs ADB (~100-300ms)
+- [x] 2.11.4 Test clipboard on Android 10+ (should work with scrcpy, fail with ADB)
+- [x] 2.11.5 Test expand_notifications (only works with scrcpy)
 
 **Phase 2 Milestone:** scrcpy-first control working. Input is 10-50x faster, screenshots near-instant, clipboard works on Android 10+.
 

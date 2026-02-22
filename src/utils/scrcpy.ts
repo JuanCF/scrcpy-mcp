@@ -47,9 +47,9 @@ export function serializeInjectKeycode(
   buffer.writeUInt8(action, offset++)
   buffer.writeInt32BE(keycode, offset)
   offset += 4
-  buffer.writeInt32BE(metaState, offset)
-  offset += 4
   buffer.writeInt32BE(repeat, offset)
+  offset += 4
+  buffer.writeInt32BE(metaState, offset)
   return buffer
 }
 
@@ -298,7 +298,7 @@ function startVideoStream(
   session: ScrcpySession,
   videoSocket: net.Socket,
   initialData?: Buffer
-): void {
+): Promise<void> {
   const ffmpegPath = findFfmpeg()
   
   const ffmpeg = spawn(ffmpegPath, [
@@ -317,6 +317,24 @@ function startVideoStream(
   session.videoSocket = videoSocket
 
   let jpegBuffer = Buffer.alloc(0)
+  let firstFrameReceived = false
+  let resolveFirstFrame: (() => void) | null = null
+  let rejectFirstFrame: ((err: Error) => void) | null = null
+
+  const firstFramePromise = new Promise<void>((resolve, reject) => {
+    resolveFirstFrame = resolve
+    rejectFirstFrame = reject
+  })
+
+  // Timeout: if no frame arrives within 10 seconds, resolve anyway
+  // (session is still usable for non-vision tools)
+  const firstFrameTimeout = setTimeout(() => {
+    if (!firstFrameReceived) {
+      console.error(`[scrcpy] [${session.serial}] Timeout waiting for first video frame, proceeding without it`)
+      firstFrameReceived = true
+      resolveFirstFrame?.()
+    }
+  }, 10000)
 
   ffmpeg.stdout?.on("data", (chunk: Buffer) => {
     jpegBuffer = Buffer.concat([jpegBuffer, chunk])
@@ -359,6 +377,17 @@ function startVideoStream(
       const frame = jpegBuffer.subarray(0, eoiIdx + 2)
       session.frameBuffer = Buffer.from(frame)
       jpegBuffer = jpegBuffer.subarray(eoiIdx + 2)
+
+      // Signal that the first frame has been received. This ensures the
+      // scrcpy server's PositionMapper (set via onNewVirtualDisplay) is
+      // initialized before we send any touch events, preventing the
+      // server from silently discarding them due to a size mismatch.
+      if (!firstFrameReceived) {
+        firstFrameReceived = true
+        clearTimeout(firstFrameTimeout)
+        console.error(`[scrcpy] [${session.serial}] First video frame received, session fully ready`)
+        resolveFirstFrame?.()
+      }
     }
   })
 
@@ -374,6 +403,11 @@ function startVideoStream(
     }
     session.frameBuffer = null
     session.videoProcess = null
+    if (!firstFrameReceived) {
+      firstFrameReceived = true
+      clearTimeout(firstFrameTimeout)
+      rejectFirstFrame?.(err)
+    }
   })
 
   ffmpeg.on("exit", (code: number | null) => {
@@ -385,6 +419,11 @@ function startVideoStream(
         session.videoSocket = null
       }
       session.frameBuffer = null
+      if (!firstFrameReceived) {
+        firstFrameReceived = true
+        clearTimeout(firstFrameTimeout)
+        rejectFirstFrame?.(new Error(`ffmpeg exited with code ${code}`))
+      }
     }
   })
 
@@ -417,6 +456,8 @@ function startVideoStream(
     }
     videoSocket.pipe(ffmpeg.stdin)
   }
+
+  return firstFramePromise
 }
 
 export function findScrcpyServer(): string | null {
@@ -529,7 +570,7 @@ export async function startScrcpyServer(
     "com.genymobile.scrcpy.Server",
     version,
     `scid=${scid.toString(16).padStart(8, "0")}`,
-    `log_level=debug`,
+    `log_level=verbose`,
     `max_size=${maxSize}`,
     `max_fps=${maxFps}`,
     `video_bit_rate=${videoBitRate}`,
@@ -540,7 +581,7 @@ export async function startScrcpyServer(
     "cleanup=true",
     "power_off_on_close=false",
     "clipboard_autosync=true",
-    "downsize_on_error=true",
+    "downsize_on_error=false",
     "send_device_meta=true",
     "send_frame_meta=false",
     "send_dummy_byte=true",
@@ -860,7 +901,18 @@ export async function startSession(
     const currentSession = session
     sessions.set(s, currentSession)
 
-    startVideoStream(currentSession, socket, overflow)
+    // Wait for the first video frame before considering the session ready.
+    // This ensures the scrcpy server's Controller has received the
+    // onNewVirtualDisplay callback (which sets up the PositionMapper for
+    // touch coordinate mapping). Without this, touch events sent before the
+    // PositionMapper is initialized are silently discarded by the server.
+    try {
+      await startVideoStream(currentSession, socket, overflow)
+    } catch (err) {
+      // If the video stream fails to produce a frame, the session is still
+      // usable for non-vision tools (key events, text input, etc.)
+      console.error(`[scrcpy] Video stream failed for ${s}, session partially ready:`, (err as Error).message)
+    }
 
     controlSocket.on("close", () => {
       currentSession.controlSocket = null
