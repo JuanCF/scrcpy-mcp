@@ -5,8 +5,12 @@ import { z } from "zod"
 import { execAdb, execAdbShell, resolveSerial } from "../utils/adb.js"
 import { hasActiveSession, startAppViaScrcpy } from "../utils/scrcpy.js"
 
-function isValidPackageName(name: string): boolean {
+export function isValidPackageName(name: string): boolean {
   return /^(?:[A-Za-z][A-Za-z0-9_]*)(?:\.(?:[A-Za-z][A-Za-z0-9_]*))+$/.test(name)
+}
+
+export function isUninstallSuccess(output: string): boolean {
+  return !output.startsWith("Failure") && !output.includes("DELETE_FAILED")
 }
 
 export function registerAppTools(server: McpServer): void {
@@ -236,7 +240,7 @@ export function registerAppTools(server: McpServer): void {
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "uninstall", packageName])
         const output = (stdout + stderr).trim()
-        const success = !output.startsWith("Failure") && !output.includes("DELETE_FAILED")
+        const success = isUninstallSuccess(output)
         return {
           content: [{
             type: "text",

@@ -13,7 +13,7 @@ interface UiElement {
   clickable: boolean
 }
 
-function parseUiNodes(xml: string): UiElement[] {
+export function parseUiNodes(xml: string): UiElement[] {
   const elements: UiElement[] = []
   const nodeRegex = /<node\s([^>]+?)(?:\/>|>)/gs
   let match: RegExpExecArray | null
@@ -50,8 +50,12 @@ function parseUiNodes(xml: string): UiElement[] {
 }
 
 async function dumpUiXml(serial: string): Promise<string> {
-  const raw = await execAdbShell(serial, "uiautomator dump /dev/tty")
-  // Strip the trailing status line uiautomator appends (e.g. "UI hierchary dumped to: /dev/tty")
+  const tmpPath = `/sdcard/.ui_dump_${Date.now()}_${Math.random().toString(36).slice(2)}.xml`
+  const raw = await execAdbShell(
+    serial,
+    `uiautomator dump ${tmpPath} 2>/dev/null; cat ${tmpPath}; rm -f ${tmpPath}`
+  )
+  // Strip the trailing status line uiautomator appends (e.g. "UI hierchary dumped to: ...")
   return raw.replace(/UI hier[^\n]*dumped to:[^\n]*/gi, "").trim()
 }
 

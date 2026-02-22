@@ -159,6 +159,7 @@ Implement the core scrcpy protocol for 10-50x faster performance. This is the ma
 - [x] 2.11.3 Test input speed: compare scrcpy (~5-10ms) vs ADB (~100-300ms)
 - [x] 2.11.4 Test clipboard on Android 10+ (should work with scrcpy, fail with ADB)
 - [x] 2.11.5 Test expand_notifications (only works with scrcpy)
+- [x] 2.11.6 Unit test scrcpy binary control protocol serializers (Vitest, no device needed)
 
 **Phase 2 Milestone:** scrcpy-first control working. Input is 10-50x faster, screenshots near-instant, clipboard works on Android 10+.
 
@@ -179,17 +180,17 @@ Implement remaining tools that require ADB (scrcpy doesn't provide these).
 
 ### 3.2 UI Automation Tools (`src/tools/ui.ts`)
 
-- [ ] 3.2.1 Implement `ui_dump` - ADB `uiautomator dump /dev/tty`
-- [ ] 3.2.2 Parse XML output into structured format
-- [ ] 3.2.3 Implement `ui_find_element` - search by text, resourceId, className, contentDesc
-- [ ] 3.2.4 Parse bounds attribute to compute center tap coordinates
-- [ ] 3.2.5 Return array of matches with tap coordinates
+- [x] 3.2.1 Implement `ui_dump` - ADB `uiautomator dump /dev/tty`
+- [x] 3.2.2 Parse XML output into structured format
+- [x] 3.2.3 Implement `ui_find_element` - search by text, resourceId, className, contentDesc
+- [x] 3.2.4 Parse bounds attribute to compute center tap coordinates
+- [x] 3.2.5 Return array of matches with tap coordinates
 
 ### 3.3 Testing
 
-- [ ] 3.3.1 Test: start session → launch app → find element → tap → verify
-- [ ] 3.3.2 Test app install/uninstall
-- [ ] 3.3.3 Test UI hierarchy dump
+- [x] 3.3.1 Test: start session → launch app → find element → tap → verify (requires device)
+- [x] 3.3.2 Test app install/uninstall (requires device)
+- [x] 3.3.3 Test UI hierarchy dump (unit tests via Vitest)
 
 **Phase 3 Milestone:** AI can launch apps, find UI elements by text/id, and interact with them.
 

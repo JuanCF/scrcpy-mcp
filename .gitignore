@@ -9,3 +9,4 @@ dist/
 coverage/
 *.tgz
 opencode.json
+.mcp.json
