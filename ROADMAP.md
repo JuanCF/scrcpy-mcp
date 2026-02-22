@@ -188,8 +188,8 @@ Implement remaining tools that require ADB (scrcpy doesn't provide these).
 
 ### 3.3 Testing
 
-- [ ] 3.3.1 Test: start session → launch app → find element → tap → verify (requires device)
-- [ ] 3.3.2 Test app install/uninstall (requires device)
+- [x] 3.3.1 Test: start session → launch app → find element → tap → verify (requires device)
+- [x] 3.3.2 Test app install/uninstall (requires device)
 - [x] 3.3.3 Test UI hierarchy dump (unit tests via Vitest)
 
 **Phase 3 Milestone:** AI can launch apps, find UI elements by text/id, and interact with them.
