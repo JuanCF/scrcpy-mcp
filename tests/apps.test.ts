@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { isValidPackageName } from "../src/tools/apps.js"
+import { isValidPackageName, isUninstallSuccess } from "../src/tools/apps.js"
 
 describe("isValidPackageName", () => {
   it("accepts standard dotted package names", () => {
@@ -39,24 +39,20 @@ describe("isValidPackageName", () => {
 })
 
 describe("app_uninstall success detection", () => {
-  // Mirrors the logic: !output.startsWith("Failure") && !output.includes("DELETE_FAILED")
-  const isSuccess = (output: string) =>
-    !output.startsWith("Failure") && !output.includes("DELETE_FAILED")
-
   it("treats 'Success' output as success", () => {
-    expect(isSuccess("Success")).toBe(true)
+    expect(isUninstallSuccess("Success")).toBe(true)
   })
 
   it("treats empty output as success (app may already be gone)", () => {
-    expect(isSuccess("")).toBe(true)
+    expect(isUninstallSuccess("")).toBe(true)
   })
 
   it("treats 'Failure' prefix as failure", () => {
-    expect(isSuccess("Failure")).toBe(false)
-    expect(isSuccess("Failure [DELETE_FAILED_INTERNAL_ERROR]")).toBe(false)
+    expect(isUninstallSuccess("Failure")).toBe(false)
+    expect(isUninstallSuccess("Failure [DELETE_FAILED_INTERNAL_ERROR]")).toBe(false)
   })
 
   it("treats DELETE_FAILED anywhere in output as failure", () => {
-    expect(isSuccess("Exception occurred while executing:\nDELETE_FAILED_INTERNAL_ERROR")).toBe(false)
+    expect(isUninstallSuccess("Exception occurred while executing:\nDELETE_FAILED_INTERNAL_ERROR")).toBe(false)
   })
 })
