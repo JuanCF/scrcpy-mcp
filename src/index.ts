@@ -8,6 +8,7 @@ import { registerVisionTools } from "./tools/vision.js"
 import { registerInputTools } from "./tools/input.js"
 import { registerAppTools } from "./tools/apps.js"
 import { registerClipboardTools } from "./tools/clipboard.js"
+import { registerUiTools } from "./tools/ui.js"
 
 const server = new McpServer({
   name: "scrcpy-mcp",
@@ -20,6 +21,7 @@ registerVisionTools(server)
 registerInputTools(server)
 registerAppTools(server)
 registerClipboardTools(server)
+registerUiTools(server)
 
 async function main() {
   const transport = new StdioServerTransport()
