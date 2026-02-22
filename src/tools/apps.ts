@@ -165,11 +165,27 @@ export function registerAppTools(server: McpServer): void {
     },
     async ({ apkPath, serial }) => {
       try {
-        if (!apkPath.endsWith(".apk") || !path.isAbsolute(apkPath) || !fs.existsSync(apkPath)) {
+        if (path.extname(apkPath).toLowerCase() !== ".apk") {
           return {
             content: [{
               type: "text",
-              text: JSON.stringify({ error: true, message: "Invalid apkPath: must be an absolute path to a .apk file" }),
+              text: JSON.stringify({ error: true, message: "Invalid apkPath: invalid extension, must be a .apk file" }),
+            }],
+          }
+        }
+        if (!path.isAbsolute(apkPath)) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: "Invalid apkPath: must be an absolute path" }),
+            }],
+          }
+        }
+        if (!fs.existsSync(apkPath)) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ error: true, message: "Invalid apkPath: file does not exist" }),
             }],
           }
         }
@@ -313,7 +329,7 @@ export function registerAppTools(server: McpServer): void {
           }
         }
         const packageName = match[1]
-        const activity = match[2] ?? null
+        const activity = match[2] ? match[2].replace(/^\/+/, "") : null
         return {
           content: [{
             type: "text",
