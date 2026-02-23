@@ -41,7 +41,7 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "prepublishOnly": "npm run build",
-    "publish:smithery": "smithery mcp publish https://github.com/JuanCF/scrcpy-mcp -n @JuanCF/scrcpy-mcp"
+    "publish:smithery": "npx smithery@4.1.1 mcp publish https://github.com/JuanCF/scrcpy-mcp -n @JuanCF/scrcpy-mcp"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

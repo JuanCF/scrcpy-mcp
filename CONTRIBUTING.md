@@ -34,7 +34,7 @@ When a labeled PR merges, the workflow will:
 
 ### Emergency / manual release
 
-If you need to trigger a publish outside of a PR merge, go to **Actions → Publish → Run workflow** and select the bump type.
+If you need to trigger a publish outside a PR merge, go to **Actions → Publish → Run workflow** and select the bump type.
 
 ## Publishing to Smithery
 

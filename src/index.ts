@@ -15,7 +15,7 @@ import { registerFileTools } from "./tools/files.js"
 function createServer() {
   const server = new McpServer({
     name: "scrcpy-mcp",
-    version: "0.1.0",
+    version: process.env.npm_package_version ?? "0.0.0",
   })
 
   registerSessionTools(server)
@@ -31,7 +31,6 @@ function createServer() {
   return server
 }
 
-// Required by Smithery to scan tools without a live device
 export function createSandboxServer() {
   return createServer()
 }
