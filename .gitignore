@@ -1,4 +1,5 @@
 node_modules/
+.smithery/
 dist/
 .env
 .env.local
