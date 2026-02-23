@@ -24,17 +24,18 @@ Releases are triggered automatically when a PR is merged into `main` with one of
 
 **PRs without a release label are not published.** Use this for docs, CI changes, refactors, or anything that shouldn't trigger a release.
 
+Before merging a release PR, bump the version in `package.json` manually (e.g. `npm version patch --no-git-tag-version`). The workflow reads the version from `package.json` and will fail if the tag already exists.
+
 When a labeled PR merges, the workflow will:
 
-1. Bump the version in `package.json` according to the label
-2. Commit the version bump to `main`
-3. Create and push a git tag (e.g. `v1.2.4`)
-4. Publish to npm
-5. Publish to the MCP Registry
+1. Read the version from `package.json`
+2. Create and push a git tag (e.g. `v1.2.4`)
+3. Publish to npm
+4. Publish to the MCP Registry
 
 ### Emergency / manual release
 
-If you need to trigger a publish outside a PR merge, go to **Actions → Publish → Run workflow** and select the bump type.
+If you need to trigger a publish outside a PR merge, go to **Actions → Publish → Run workflow**.
 
 ## Publishing to Smithery
 

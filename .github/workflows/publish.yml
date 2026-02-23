@@ -6,16 +6,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      bump:
-        description: 'Version bump type'
-        required: true
-        default: 'patch'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
 permissions:
   contents: write
   id-token: write
@@ -38,35 +28,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-      - name: Determine bump type
-        id: bump
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "type=${{ github.event.inputs.bump }}" >> $GITHUB_OUTPUT
-          else
-            LABELS='${{ join(github.event.pull_request.labels.*.name, ' ') }}'
-            if echo "$LABELS" | grep -qw "major"; then
-              echo "type=major" >> $GITHUB_OUTPUT
-            elif echo "$LABELS" | grep -qw "minor"; then
-              echo "type=minor" >> $GITHUB_OUTPUT
-            else
-              echo "type=patch" >> $GITHUB_OUTPUT
-            fi
-          fi
-      - name: Bump version in package.json
+      - name: Read version from package.json
         id: version
         run: |
-          npm version ${{ steps.bump.outputs.type }} --no-git-tag-version
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-      - name: Commit, tag, and push
+      - name: Check tag does not already exist
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}" | grep -q .; then
+            echo "Tag v${{ steps.version.outputs.version }} already exists. Bump the version in package.json before merging a release PR."
+            exit 1
+          fi
+      - name: Create and push tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to v${{ steps.version.outputs.version }}"
           git tag "v${{ steps.version.outputs.version }}"
-          git push origin main
           git push origin "v${{ steps.version.outputs.version }}"
       - name: Setup Node.js
         uses: actions/setup-node@v4
