@@ -36,7 +36,8 @@ jobs:
       - name: Check tag does not already exist
         run: |
           set -euo pipefail
-          if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}" | grep -q .; then
+          REMOTE_OUTPUT=$(git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}")
+          if echo "$REMOTE_OUTPUT" | grep -q .; then
             echo "Tag v${{ steps.version.outputs.version }} already exists. Bump the version in package.json before merging a release PR."
             exit 1
           fi
@@ -74,7 +75,7 @@ jobs:
           rm "${TARBALL}" checksums.txt
       - name: Update server.json version
         run: |
-          VERSION=${{ steps.version.outputs.version }}
+          VERSION="${{ steps.version.outputs.version }}"
           jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp
           mv server.tmp server.json
       - name: Authenticate to MCP Registry (OIDC)
