@@ -35,6 +35,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: Check tag does not already exist
         run: |
+          set -euo pipefail
           if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}" | grep -q .; then
             echo "Tag v${{ steps.version.outputs.version }} already exists. Bump the version in package.json before merging a release PR."
             exit 1
