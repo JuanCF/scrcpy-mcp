@@ -1237,28 +1237,6 @@ The `"files"` field in `package.json` ensures only the `dist/` folder is publish
 4. Add MIT LICENSE file
 5. Optional: Add GitHub Actions CI for automated builds and npm publishing on tag
 
-### Smithery listing (optional)
-
-[Smithery](https://smithery.ai) is a registry for MCP servers. To list:
-1. Add a `smithery.yaml` to the repo root:
-
-```yaml
-startCommand:
-  type: stdio
-  configSchema:
-    type: object
-    properties:
-      ADB_PATH:
-        type: string
-        default: "adb"
-        description: "Path to ADB binary"
-  commandFunction:
-    - name: node
-      args:
-        - dist/index.js
-```
-
-2. Submit to smithery.ai
 
 ### MCP Registry (GitHub)
 
@@ -1482,7 +1460,6 @@ The implementation will proceed in phases, with each phase producing a working s
 | 25 | Add LICENSE | `LICENSE` |
 | 26 | Git init, create GitHub repo, push | — |
 | 27 | Publish to npm | — |
-| 28 | Register on Smithery (optional) | `smithery.yaml` |
 
 **Milestone: Published on npm, installable via `npx scrcpy-mcp`.**
 

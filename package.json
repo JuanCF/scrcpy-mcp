@@ -40,8 +40,7 @@
     "test": "vitest run",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "prepublishOnly": "npm run build",
-    "publish:smithery": "npx smithery@4.1.1 mcp publish https://github.com/JuanCF/scrcpy-mcp -n @JuanCF/scrcpy-mcp"
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

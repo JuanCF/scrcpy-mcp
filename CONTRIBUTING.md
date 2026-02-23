@@ -36,11 +36,3 @@ When a labeled PR merges, the workflow will:
 ### Emergency / manual release
 
 If you need to trigger a publish outside a PR merge, go to **Actions → Publish → Run workflow**.
-
-## Publishing to Smithery
-
-After a new version is released to npm, update the Smithery listing:
-
-```bash
-npm run publish:smithery
-```
