@@ -8,7 +8,7 @@ export function registerVideoTools(server: McpServer): void {
   server.registerTool(
     "start_video_stream",
     {
-      description: "Start an HTTP MJPEG video stream of the device screen. Opens a native ffplay window sized to the device screen that receives raw H.264 directly (no re-encode). Requires an active scrcpy session.",
+      description: "Start an HTTP MJPEG video stream of the device screen. Opens a native ffplay window that connects to the stream URL. Requires an active scrcpy session.",
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
         port: z.number().int().min(1024).max(65535).optional().default(7183).describe("HTTP port for the MJPEG stream (default 7183)"),
