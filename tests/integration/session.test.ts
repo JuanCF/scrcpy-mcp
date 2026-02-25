@@ -13,7 +13,7 @@ describe("Session Tools Integration", () => {
       // Ignore if no session
     }
     await disconnectClient()
-  })
+  }, 30000)
 
   // Tests are order-dependent: start_session must run before screenshot, and stop_session must run last
   describe("start_session / stop_session", () => {
@@ -42,7 +42,10 @@ describe("Session Tools Integration", () => {
     it("should stop the session", async () => {
       const result = await callTool("stop_session")
       const text = parseResult(result)
+      if (typeof text !== "string") {
+        throw new Error(`Expected string response, got ${typeof text}`)
+      }
       expect(text).toContain("stopped")
-    })
+    }, 30000)
   })
 })

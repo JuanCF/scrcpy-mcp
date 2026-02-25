@@ -54,6 +54,7 @@ jobs:
     needs: [lint-and-build, test]
     env:
       SCRCPY_SERVER_VERSION: "3.3.4"
+      SCRCPY_SERVER_SHA256: "8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e"
 
     steps:
       - name: Checkout
@@ -100,8 +101,10 @@ jobs:
       - name: Download scrcpy-server
         run: |
           mkdir -p ~/.local/share/scrcpy
-          curl -L -o ~/.local/share/scrcpy/scrcpy-server \
+          curl --fail -L -o /tmp/scrcpy-server \
             https://github.com/Genymobile/scrcpy/releases/download/v${{ env.SCRCPY_SERVER_VERSION }}/scrcpy-server-v${{ env.SCRCPY_SERVER_VERSION }}
+          echo "${{ env.SCRCPY_SERVER_SHA256 }}  /tmp/scrcpy-server" | sha256sum --check
+          mv /tmp/scrcpy-server ~/.local/share/scrcpy/scrcpy-server
 
       - name: Run integration tests
         uses: reactivecircus/android-emulator-runner@v2
