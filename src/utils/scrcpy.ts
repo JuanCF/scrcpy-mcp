@@ -1,7 +1,11 @@
 import { spawn, execSync, ChildProcess } from "child_process"
+import { createRequire } from "module"
 import * as net from "net"
 import * as path from "path"
 import * as fs from "fs"
+
+const _require = createRequire(import.meta.url)
+const ffmpegStatic: string | null = _require("ffmpeg-static")
 import { execAdb, execAdbShell, resolveSerial } from "./adb.js"
 import {
   ADB_PATH,
@@ -294,6 +298,7 @@ const findFfmpeg = (): string => {
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
     return process.env.FFMPEG_PATH
   }
+  if (ffmpegStatic) return ffmpegStatic
   return "ffmpeg"
 }
 

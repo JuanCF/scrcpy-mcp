@@ -100,9 +100,6 @@ jobs:
           curl -L -o ~/.local/share/scrcpy/scrcpy-server \
             https://github.com/Genymobile/scrcpy/releases/download/v2.7/scrcpy-server-v2.7
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
       - name: Run integration tests
         uses: reactivecircus/android-emulator-runner@v2
         env:
