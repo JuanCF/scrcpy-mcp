@@ -13,13 +13,13 @@ describe("Input Tools Integration", () => {
   describe("screen_on / screen_off", () => {
     it("should turn screen on", async () => {
       const result = await callTool("screen_on")
-      const text = parseResult(result)
+      const text = String(parseResult(result))
       expect(text).toContain("on")
     })
 
     it("should turn screen off", async () => {
       const result = await callTool("screen_off")
-      const text = parseResult(result)
+      const text = String(parseResult(result))
       expect(text).toContain("off")
     })
   })
@@ -27,13 +27,13 @@ describe("Input Tools Integration", () => {
   describe("key_event", () => {
     it("should send HOME key event", async () => {
       const result = await callTool("key_event", { keycode: "HOME" })
-      const text = parseResult(result)
+      const text = String(parseResult(result))
       expect(text).toContain("HOME")
     })
 
     it("should send BACK key event", async () => {
       const result = await callTool("key_event", { keycode: "BACK" })
-      const text = parseResult(result)
+      const text = String(parseResult(result))
       expect(text).toContain("BACK")
     })
   })
@@ -41,7 +41,7 @@ describe("Input Tools Integration", () => {
   describe("tap", () => {
     it("should tap at coordinates", async () => {
       const result = await callTool("tap", { x: 500, y: 500 })
-      const text = parseResult(result)
+      const text = String(parseResult(result))
       expect(text).toContain("500")
     })
   })
@@ -55,7 +55,7 @@ describe("Input Tools Integration", () => {
         y2: 200,
         duration: 300,
       })
-      const text = parseResult(result)
+      const text = String(parseResult(result))
       expect(text).toContain("Swiped")
     })
   })

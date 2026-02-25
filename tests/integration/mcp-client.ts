@@ -23,13 +23,14 @@ export async function connectClient(): Promise<Client> {
 }
 
 export async function disconnectClient(): Promise<void> {
-  if (client) {
-    await client.close()
+  try {
+    if (client) await client.close()
+  } finally {
+    if (transport) {
+      transport.close()
+      transport = null
+    }
     client = null
-  }
-  if (transport) {
-    transport.close()
-    transport = null
   }
 }
 

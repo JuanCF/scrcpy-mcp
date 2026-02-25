@@ -51,6 +51,9 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: [lint-and-build, test]
+    env:
+      SCRCPY_SERVER_VERSION: "3.3.4"
 
     steps:
       - name: Checkout
@@ -81,7 +84,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-x86-64
+          key: avd-30-x86_64-${{ runner.os }}-v1
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -98,13 +101,12 @@ jobs:
         run: |
           mkdir -p ~/.local/share/scrcpy
           curl -L -o ~/.local/share/scrcpy/scrcpy-server \
-            https://github.com/Genymobile/scrcpy/releases/download/v3.3.4/scrcpy-server-v3.3.4
+            https://github.com/Genymobile/scrcpy/releases/download/v${{ env.SCRCPY_SERVER_VERSION }}/scrcpy-server-v${{ env.SCRCPY_SERVER_VERSION }}
 
       - name: Run integration tests
         uses: reactivecircus/android-emulator-runner@v2
         env:
           SCRCPY_SERVER_PATH: /home/runner/.local/share/scrcpy/scrcpy-server
-          SCRCPY_SERVER_VERSION: "3.3.4"
         with:
           api-level: 30
           arch: x86_64

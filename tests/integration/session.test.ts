@@ -15,6 +15,7 @@ describe("Session Tools Integration", () => {
     await disconnectClient()
   })
 
+  // Tests are order-dependent: start_session must run before screenshot, and stop_session must run last
   describe("start_session / stop_session", () => {
     it("should start a scrcpy session", async () => {
       const result = await callTool("start_session", {
