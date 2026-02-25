@@ -89,7 +89,7 @@ jobs:
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b
         with:
           api-level: 30
           arch: x86_64
@@ -107,9 +107,9 @@ jobs:
           mv /tmp/scrcpy-server ~/.local/share/scrcpy/scrcpy-server
 
       - name: Run integration tests
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b
         env:
-          SCRCPY_SERVER_PATH: /home/runner/.local/share/scrcpy/scrcpy-server
+          SCRCPY_SERVER_PATH: ${{ env.HOME }}/.local/share/scrcpy/scrcpy-server
         with:
           api-level: 30
           arch: x86_64
@@ -119,4 +119,6 @@ jobs:
           script: |
             adb wait-for-device
             adb devices -l
+            echo "Waiting for Android boot to complete..."
+            timeout 120 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 2; done'
             npm run test:integration
