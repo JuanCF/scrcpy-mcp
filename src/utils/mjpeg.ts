@@ -102,7 +102,7 @@ export function stopMjpegServer(serial: string): boolean {
   const entry = servers.get(serial)
   if (!entry) return false
   clearInterval(entry.intervalId)
-  for (const res of entry.clients) { try { res.end() } catch {} }
+  for (const res of entry.clients) { try { res.end() } catch { /* ignore */ } }
   entry.server.close()
 
   const session = getSession(serial)

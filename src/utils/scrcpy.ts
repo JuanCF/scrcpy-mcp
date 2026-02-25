@@ -470,7 +470,9 @@ function startVideoStream(
       // Update rolling H.264 buffer
       session.h264Buffer = Buffer.concat([session.h264Buffer, chunk])
       if (session.h264Buffer.length > MAX_H264_BUFFER) {
-        session.h264Buffer = session.h264Buffer.subarray(session.h264Buffer.length - MAX_H264_BUFFER)
+        session.h264Buffer = session.h264Buffer.subarray(
+          session.h264Buffer.length - MAX_H264_BUFFER
+        )
       }
       if (session.viewerStdin) {
         const vs = session.viewerStdin as NodeJS.WritableStream & { destroyed?: boolean }
