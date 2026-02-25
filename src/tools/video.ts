@@ -28,16 +28,24 @@ export function registerVideoTools(server: McpServer): void {
             }],
           }
         }
-        const resolvedPort = port ?? 7183
+        const session = getSession(s)
+        if (!session) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                status: "error",
+                message: "No active scrcpy session. Call start_session first.",
+              }, null, 2),
+            }],
+          }
+        }
+        const resolvedPort = port
         const url = await startMjpegServer(s, resolvedPort)
 
-        const session = getSession(s)
-        let viewerLaunched = false
-        if (session) {
-          viewerLaunched = await startMjpegViewer(
-            s, session.screenSize.width, session.screenSize.height, resolvedPort
-          )
-        }
+        const viewerLaunched = await startMjpegViewer(
+          s, session.screenSize.width, session.screenSize.height, resolvedPort
+        )
 
         return {
           content: [{
@@ -45,7 +53,7 @@ export function registerVideoTools(server: McpServer): void {
             text: JSON.stringify({
               status: "started",
               url,
-              screenSize: session?.screenSize,
+              screenSize: session.screenSize,
               viewer: viewerLaunched ? "ffplay window opened" : "ffplay not available — open URL manually",
             }, null, 2),
           }],
@@ -80,7 +88,10 @@ export function registerVideoTools(server: McpServer): void {
           return {
             content: [{
               type: "text",
-              text: "No video stream is running for this device.",
+              text: JSON.stringify({
+                status: "error",
+                message: "No video stream is running for this device.",
+              }, null, 2),
             }],
           }
         }
@@ -88,7 +99,10 @@ export function registerVideoTools(server: McpServer): void {
         return {
           content: [{
             type: "text",
-            text: "Video stream stopped.",
+            text: JSON.stringify({
+              status: "stopped",
+              message: "Video stream stopped.",
+            }, null, 2),
           }],
         }
       } catch (error) {
