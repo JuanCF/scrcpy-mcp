@@ -76,7 +76,7 @@ export async function startMjpegServer(serial: string, port: number): Promise<st
 }
 
 export async function startMjpegViewer(
-  serial: string, width: number, height: number
+  serial: string, width: number, height: number, port: number
 ): Promise<boolean> {
   const session = getSession(serial)
   if (!session) return false
@@ -95,26 +95,21 @@ export async function startMjpegViewer(
       "-y", String(height),
       "-window_title", "scrcpy-mcp",
       "-loglevel", "quiet",
-      "-f", "h264",
-      "-i", "pipe:0",
-    ], { stdio: ["pipe", "ignore", "ignore"] })
+      `http://localhost:${port}`,
+    ], { stdio: ["ignore", "ignore", "ignore"] })
 
     viewer.once("spawn", () => {
-      // Replay buffered H.264 history so ffplay can find a keyframe (SPS+PPS+IDR)
-      // even when connecting after the session has been running for a while.
-      if (viewer.stdin && session.h264Buffer.length > 0) {
-        viewer.stdin.write(session.h264Buffer)
-      }
       session.viewerProcess = viewer
-      session.viewerStdin = viewer.stdin
       settled = true
       resolve(true)
     })
 
     viewer.on("error", (err) => {
       console.error(`[mjpeg] ffplay error for ${serial}:`, err.message)
-      session.viewerProcess = null
-      session.viewerStdin = null
+      if (session.viewerProcess === viewer) {
+        session.viewerProcess = null
+        session.viewerStdin = null
+      }
       if (!settled) {
         settled = true
         resolve(false)
@@ -122,8 +117,10 @@ export async function startMjpegViewer(
     })
 
     viewer.on("exit", () => {
-      session.viewerProcess = null
-      session.viewerStdin = null
+      if (session.viewerProcess === viewer) {
+        session.viewerProcess = null
+        session.viewerStdin = null
+      }
     })
   })
 }

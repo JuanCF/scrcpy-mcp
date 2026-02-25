@@ -35,7 +35,7 @@ export function registerVideoTools(server: McpServer): void {
         let viewerLaunched = false
         if (session) {
           viewerLaunched = await startMjpegViewer(
-            s, session.screenSize.width, session.screenSize.height
+            s, session.screenSize.width, session.screenSize.height, resolvedPort
           )
         }
 
