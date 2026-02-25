@@ -29,12 +29,14 @@ export function registerVideoTools(server: McpServer): void {
           }
         }
         const resolvedPort = port ?? 7183
-        const url = startMjpegServer(s, resolvedPort)
+        const url = await startMjpegServer(s, resolvedPort)
 
         const session = getSession(s)
         let viewerLaunched = false
         if (session) {
-          viewerLaunched = startMjpegViewer(s, session.screenSize.width, session.screenSize.height)
+          viewerLaunched = await startMjpegViewer(
+            s, session.screenSize.width, session.screenSize.height
+          )
         }
 
         return {

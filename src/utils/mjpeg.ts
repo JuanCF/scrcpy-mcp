@@ -13,7 +13,7 @@ const servers = new Map<string, MjpegEntry>()
 const BOUNDARY = "scrcpy_frame"
 const FRAME_INTERVAL_MS = 33 // ~30 fps
 
-export function startMjpegServer(serial: string, port: number): string {
+export async function startMjpegServer(serial: string, port: number): Promise<string> {
   if (servers.has(serial)) stopMjpegServer(serial)
 
   const clients = new Set<http.ServerResponse>()
@@ -28,7 +28,14 @@ export function startMjpegServer(serial: string, port: number): string {
     res.on("close", () => clients.delete(res))
   })
 
-  server.listen(port)
+  // Wait for listen to succeed; reject immediately on bind error
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(port, "127.0.0.1", () => {
+      server.removeListener("error", reject)
+      resolve()
+    })
+  })
 
   let lastFrame: Buffer | null = null
 
@@ -45,15 +52,32 @@ export function startMjpegServer(serial: string, port: number): string {
     const chunk = Buffer.concat([header, frame, tail])
 
     for (const res of clients) {
-      try { res.write(chunk) } catch { clients.delete(res) }
+      try { res.write(chunk) } catch (err) {
+        console.error(`[mjpeg] Failed to write to client for ${serial}:`, err)
+        clients.delete(res)
+      }
     }
   }, FRAME_INTERVAL_MS)
+
+  // Runtime error handler (after successful bind)
+  server.on("error", (err) => {
+    console.error(`[mjpeg] Server error for ${serial}:`, err)
+    clearInterval(intervalId)
+    for (const res of clients) {
+      try { res.end() } catch (e) {
+        console.error(`[mjpeg] Failed to end client for ${serial}:`, e)
+      }
+    }
+    servers.delete(serial)
+  })
 
   servers.set(serial, { server, clients, intervalId, port })
   return `http://localhost:${port}`
 }
 
-export function startMjpegViewer(serial: string, width: number, height: number): boolean {
+export async function startMjpegViewer(
+  serial: string, width: number, height: number
+): Promise<boolean> {
   const session = getSession(serial)
   if (!session) return false
 
@@ -63,8 +87,9 @@ export function startMjpegViewer(serial: string, width: number, height: number):
   session.viewerProcess = null
   session.viewerStdin = null
 
-  try {
-    // ffplay reads raw H.264 directly from stdin — no MJPEG re-encode needed.
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+
     const viewer = spawn("ffplay", [
       "-x", String(width),
       "-y", String(height),
@@ -74,35 +99,44 @@ export function startMjpegViewer(serial: string, width: number, height: number):
       "-i", "pipe:0",
     ], { stdio: ["pipe", "ignore", "ignore"] })
 
+    viewer.once("spawn", () => {
+      // Replay buffered H.264 history so ffplay can find a keyframe (SPS+PPS+IDR)
+      // even when connecting after the session has been running for a while.
+      if (viewer.stdin && session.h264Buffer.length > 0) {
+        viewer.stdin.write(session.h264Buffer)
+      }
+      session.viewerProcess = viewer
+      session.viewerStdin = viewer.stdin
+      settled = true
+      resolve(true)
+    })
+
     viewer.on("error", (err) => {
       console.error(`[mjpeg] ffplay error for ${serial}:`, err.message)
       session.viewerProcess = null
       session.viewerStdin = null
+      if (!settled) {
+        settled = true
+        resolve(false)
+      }
     })
 
     viewer.on("exit", () => {
       session.viewerProcess = null
       session.viewerStdin = null
     })
-
-    // Replay buffered H.264 history so ffplay can find a keyframe (SPS+PPS+IDR)
-    // even when connecting after the session has been running for a while.
-    if (viewer.stdin && session.h264Buffer.length > 0) {
-      viewer.stdin.write(session.h264Buffer)
-    }
-    session.viewerProcess = viewer
-    session.viewerStdin = viewer.stdin
-    return true
-  } catch {
-    return false
-  }
+  })
 }
 
 export function stopMjpegServer(serial: string): boolean {
   const entry = servers.get(serial)
   if (!entry) return false
   clearInterval(entry.intervalId)
-  for (const res of entry.clients) { try { res.end() } catch { /* ignore */ } }
+  for (const res of entry.clients) {
+    try { res.end() } catch (err) {
+      console.error(`[mjpeg] Failed to end client for ${serial}:`, err)
+    }
+  }
   entry.server.close()
 
   const session = getSession(serial)

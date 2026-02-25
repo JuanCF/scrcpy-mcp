@@ -452,17 +452,24 @@ function startVideoStream(
       }
     })
 
-    // Write any overflow bytes from the metadata read before starting the tee
-    if (initialData && initialData.length > 0) {
-      ffmpeg.stdin.write(initialData)
-    }
-
     // Tee the raw H.264 stream: ffmpeg (for JPEG frame extraction / screenshots)
     // and optionally the viewer process stdin (raw H.264, no re-encode needed).
     // A rolling buffer of recent H.264 data is kept so that a viewer that connects
     // after session start can receive enough history to include a full keyframe
     // (SPS+PPS+IDR), allowing it to start decoding immediately.
     const MAX_H264_BUFFER = 2 * 1024 * 1024 // 2 MB ≈ 2s at 8Mbps
+
+    // Write any overflow bytes from the metadata read before starting the tee,
+    // and include them in the rolling H.264 history (they carry SPS/PPS/IDR data).
+    if (initialData && initialData.length > 0) {
+      ffmpeg.stdin.write(initialData)
+      session.h264Buffer = Buffer.concat([session.h264Buffer, initialData])
+      if (session.h264Buffer.length > MAX_H264_BUFFER) {
+        session.h264Buffer = session.h264Buffer.subarray(
+          session.h264Buffer.length - MAX_H264_BUFFER
+        )
+      }
+    }
     videoSocket.on("data", (chunk: Buffer) => {
       if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
         try { ffmpeg.stdin.write(chunk) } catch { /* EPIPE handled above */ }
