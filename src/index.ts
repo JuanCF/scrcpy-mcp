@@ -11,6 +11,7 @@ import { registerClipboardTools } from "./tools/clipboard.js"
 import { registerUiTools } from "./tools/ui.js"
 import { registerShellTools } from "./tools/shell.js"
 import { registerFileTools } from "./tools/files.js"
+import { registerVideoTools } from "./tools/video.js"
 
 function createServer() {
   const server = new McpServer({
@@ -27,6 +28,7 @@ function createServer() {
   registerUiTools(server)
   registerShellTools(server)
   registerFileTools(server)
+  registerVideoTools(server)
 
   return server
 }

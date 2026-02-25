@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import { resolveSerial } from "../utils/adb.js"
 import { startSession, stopSession } from "../utils/scrcpy.js"
+import { stopMjpegServer } from "../utils/mjpeg.js"
 
 export function registerSessionTools(server: McpServer): void {
   server.registerTool(
@@ -56,6 +57,7 @@ export function registerSessionTools(server: McpServer): void {
       try {
         const s = await resolveSerial(serial)
         await stopSession(s)
+        stopMjpegServer(s)
         return {
           content: [{
             type: "text",

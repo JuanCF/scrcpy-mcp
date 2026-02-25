@@ -269,6 +269,9 @@ export interface ScrcpySession {
   frameBuffer: Buffer | null
   screenSize: { width: number; height: number }
   clipboardContent: string | null
+  viewerProcess: ChildProcess | null
+  viewerStdin: NodeJS.WritableStream | null
+  h264Buffer: Buffer  // rolling buffer for late viewer connections
 }
 
 const sessions: Map<string, ScrcpySession> = new Map()
@@ -447,18 +450,37 @@ function startVideoStream(
       } else {
         console.error(`[scrcpy] ffmpeg stdin error for ${session.serial}:`, err.message)
       }
-      videoSocket.unpipe()
     })
 
-    ffmpeg.stdin.on("close", () => {
-      videoSocket.unpipe()
-    })
-
-    // Write any overflow bytes from the metadata read before piping
+    // Write any overflow bytes from the metadata read before starting the tee
     if (initialData && initialData.length > 0) {
       ffmpeg.stdin.write(initialData)
     }
-    videoSocket.pipe(ffmpeg.stdin)
+
+    // Tee the raw H.264 stream: ffmpeg (for JPEG frame extraction / screenshots)
+    // and optionally the viewer process stdin (raw H.264, no re-encode needed).
+    // A rolling buffer of recent H.264 data is kept so that a viewer that connects
+    // after session start can receive enough history to include a full keyframe
+    // (SPS+PPS+IDR), allowing it to start decoding immediately.
+    const MAX_H264_BUFFER = 2 * 1024 * 1024 // 2 MB ≈ 2s at 8Mbps
+    videoSocket.on("data", (chunk: Buffer) => {
+      if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
+        try { ffmpeg.stdin.write(chunk) } catch { /* EPIPE handled above */ }
+      }
+      // Update rolling H.264 buffer
+      session.h264Buffer = Buffer.concat([session.h264Buffer, chunk])
+      if (session.h264Buffer.length > MAX_H264_BUFFER) {
+        session.h264Buffer = session.h264Buffer.subarray(session.h264Buffer.length - MAX_H264_BUFFER)
+      }
+      if (session.viewerStdin) {
+        const vs = session.viewerStdin as NodeJS.WritableStream & { destroyed?: boolean }
+        if (!vs.destroyed) {
+          try { vs.write(chunk) } catch {
+            session.viewerStdin = null
+          }
+        }
+      }
+    })
   }
 
   return firstFramePromise
@@ -900,6 +922,9 @@ export async function startSession(
       frameBuffer: null,
       screenSize: { width, height },
       clipboardContent: null,
+      viewerProcess: null,
+      viewerStdin: null,
+      h264Buffer: Buffer.alloc(0),
     }
 
     const currentSession = session
@@ -968,6 +993,12 @@ export async function stopSession(serial: string): Promise<void> {
     session.videoProcess.kill()
     session.videoProcess = null
   }
+
+  if (session.viewerProcess && !session.viewerProcess.killed) {
+    session.viewerProcess.kill()
+  }
+  session.viewerProcess = null
+  session.viewerStdin = null
 
   try {
     await execAdbShell(s, `pkill -f scrcpy-server`)
