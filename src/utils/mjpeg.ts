@@ -68,11 +68,14 @@ export async function startMjpegServer(serial: string, port: number): Promise<st
         console.error(`[mjpeg] Failed to end client for ${serial}:`, e)
       }
     }
+    server.close((closeErr) => {
+      if (closeErr) console.error(`[mjpeg] Failed to close server for ${serial}:`, closeErr)
+    })
     servers.delete(serial)
   })
 
   servers.set(serial, { server, clients, intervalId, port })
-  return `http://localhost:${port}`
+  return `http://127.0.0.1:${port}`
 }
 
 export async function startMjpegViewer(
@@ -95,7 +98,7 @@ export async function startMjpegViewer(
       "-y", String(height),
       "-window_title", "scrcpy-mcp",
       "-loglevel", "quiet",
-      `http://localhost:${port}`,
+      `http://127.0.0.1:${port}`,
     ], { stdio: ["ignore", "ignore", "ignore"] })
 
     viewer.once("spawn", () => {
