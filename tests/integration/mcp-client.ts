@@ -1,11 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { spawn, ChildProcess } from "child_process"
 
 let client: Client | null = null
 let transport: StdioClientTransport | null = null
-let serverProcess: ChildProcess | null = null
 
 export async function connectClient(): Promise<Client> {
   if (client) return client
@@ -32,10 +30,6 @@ export async function disconnectClient(): Promise<void> {
   if (transport) {
     transport.close()
     transport = null
-  }
-  if (serverProcess) {
-    serverProcess.kill()
-    serverProcess = null
   }
 }
 

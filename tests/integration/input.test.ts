@@ -56,7 +56,7 @@ describe("Input Tools Integration", () => {
         duration: 300,
       })
       const text = parseResult(result)
-      expect(text).toContain("swipe")
+      expect(text).toContain("Swiped")
     })
   })
 })
