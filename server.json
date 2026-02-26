@@ -6,12 +6,12 @@
     "url": "https://github.com/JuanCF/scrcpy-mcp",
     "source": "github"
   },
-  "version": "0.1.3",
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "scrcpy-mcp",
-      "version": "0.1.3",
+      "version": "0.2.1",
       "transport": {
         "type": "stdio"
       },

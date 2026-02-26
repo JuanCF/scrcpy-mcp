@@ -32,11 +32,21 @@ npm run lint
 # Lint with auto-fix
 npm run lint:fix
 
-# Type check (use tsc directly)
+# Type check
 npx tsc --noEmit
-```
 
-**Note:** There is no test framework configured yet. When tests are added, use Vitest.
+# Run all tests
+npm run test
+
+# Run integration tests only
+npm run test:integration
+
+# Run a single test file
+npx vitest run tests/example.test.ts
+
+# Run tests matching a pattern
+npx vitest run --testNamePattern "device"
+```
 
 ## Project Structure
 
@@ -68,17 +78,14 @@ import { execAdbShell, resolveSerial } from "../utils/adb.js";
 ### Formatting
 
 - No semicolons at end of statements
-- 2-space indentation
-- Max line length: ~100 characters
+- 2-space indentation, max line length ~100 characters
 - Trailing commas in multiline arrays/objects
 
 ### Types
 
 - Use TypeScript strict mode
-- Define interfaces for complex objects
-- Use `type` for unions and simple aliases
-- Prefer `interface` for object shapes
-- Use `const` for constant objects that won't change
+- Define interfaces for complex objects, `type` for unions/aliases
+- Prefer `interface` for object shapes, `const` for constant objects
 
 ```typescript
 interface DeviceInfo {
@@ -94,33 +101,21 @@ type Keycode = string | number;
 
 - **Variables/functions:** camelCase (`execAdb`, `resolveSerial`)
 - **Interfaces/types:** PascalCase (`DeviceInfo`, `ExecResult`)
-- **Constants:** UPPER_SNAKE_CASE for true constants (`KEYCODE_MAP`, `DEFAULT_TIMEOUT`)
-- **Files:** lowercase filenames (`device.ts`, `adb.ts`)
+- **Constants:** UPPER_SNAKE_CASE (`KEYCODE_MAP`, `DEFAULT_TIMEOUT`)
+- **Files:** lowercase (`device.ts`, `adb.ts`)
 - **Tool names:** snake_case (`device_list`, `screen_on`)
 
 ### Function Style
 
 - Prefer `async/await` over raw promises
-- Arrow functions for callbacks and short utilities
-- Named function declarations for exported utilities
+- Arrow functions for callbacks, named declarations for exported utilities
 - Use early returns to reduce nesting
-
-```typescript
-export async function resolveSerial(serial?: string): Promise<string> {
-  if (serial) return serial;
-  
-  const envSerial = process.env.ANDROID_SERIAL;
-  if (envSerial) return envSerial;
-  
-  // ... rest of logic
-}
-```
 
 ### Error Handling
 
-- Throw `Error` objects with descriptive messages
-- Include context in error messages (command, device serial, etc.)
-- Use `{ cause }` option to preserve original error chain
+- Throw `Error` objects with descriptive messages including context (command, device serial, etc.)
+- Use `{ cause }` option to preserve error chain
+- Return error info in tool responses rather than throwing for user-facing errors
 
 ```typescript
 throw new Error(
@@ -128,8 +123,6 @@ throw new Error(
   { cause: error }
 );
 ```
-
-- Return error info in tool responses rather than throwing when the error is user-facing
 
 ### MCP Tool Registration Pattern
 
@@ -145,19 +138,15 @@ server.registerTool(
   },
   async ({ param, required }) => {
     const result = await doWork(param, required);
-    return {
-      content: [{ type: "text", text: JSON.stringify(result) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
   }
 );
 ```
 
 ### Zod Schema Patterns
 
-- Use `.optional()` for optional parameters
-- Use `.describe()` for all parameters (used for tool documentation)
-- Use `.default()` for parameters with defaults
-- Use `.int().nonnegative()` for coordinates
+- Use `.optional()` for optional params, `.describe()` for documentation
+- Use `.default()` for defaults, `.int().nonnegative()` for coordinates
 
 ```typescript
 {
@@ -175,22 +164,20 @@ server.registerTool(
 ### Comments
 
 - Avoid comments unless code is genuinely complex
-- Prefer self-documenting code with clear names
-- Use `console.error()` for server-side logging (goes to stderr, not MCP protocol)
+- Use `console.error()` for server-side logging (stderr, not MCP protocol)
 
 ## Key Implementation Notes
 
 ### ADB Utilities (`src/utils/adb.ts`)
 
 - `execAdb()`: Run adb command, returns `{ stdout, stderr }`
-- `execAdbRaw()`: Run adb command, returns `Buffer` (for binary data)
+- `execAdbRaw()`: Run adb command, returns `Buffer` (binary data)
 - `execAdbShell()`: Run `adb -s <serial> shell <command>`
 - `resolveSerial()`: Auto-detect device or validate provided serial
 - `getDevices()`: Parse `adb devices -l` output
 
 ### Tool Response Format
 
-All tools return:
 ```typescript
 {
   content: [
@@ -204,4 +191,5 @@ All tools return:
 
 1. Run `npm run lint` and fix any issues
 2. Run `npm run build` to ensure it compiles
-3. Test with `npm run inspect` if making tool changes
+3. Run `npm run test` to verify tests pass
+4. Test with `npm run inspect` if making tool changes
