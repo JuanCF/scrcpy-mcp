@@ -63,8 +63,10 @@ jobs:
         run: npm install -g npm@latest
       - name: Install dependencies
         run: npm ci
+      - name: Rebuild esbuild binary
+        run: npm rebuild esbuild --ignore-scripts=false
       - name: Publish to npm (Trusted Publishing)
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --ignore-scripts=false
       # -----------------------------
       # MCP REGISTRY SECTION
       # -----------------------------
