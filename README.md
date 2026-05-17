@@ -127,6 +127,27 @@ Add to `.vscode/mcp.json`:
 }
 ```
 
+### Customizing Environment Variables
+
+If you need to configure custom options (such as pointing to a non-standard `scrcpy-server` path or forcing a specific version), you can add the `"env"` object to your server configuration. For example:
+
+```json
+{
+  "mcpServers": {
+    "android": {
+      "command": "npx",
+      "args": ["scrcpy-mcp"],
+      "env": {
+        "SCRCPY_SERVER_PATH": "C:\\path\\to\\scrcpy-server",
+        "SCRCPY_SERVER_VERSION": "3.3.4"
+      }
+    }
+  }
+}
+```
+
+*Note: On Windows, remember to double-escape backslashes (`\\`) in your configuration paths.*
+
 ## Tool Reference
 
 ### Session Management
@@ -239,6 +260,9 @@ Accept the RSA fingerprint prompt on the device. If the prompt doesn't appear, r
 
 **`start_session` fails**
 Make sure scrcpy is installed and the `scrcpy-server` binary is accessible. Set `SCRCPY_SERVER_PATH` if it's in a non-standard location.
+* **File vs Directory**: Ensure `SCRCPY_SERVER_PATH` points directly to the `scrcpy-server` **file** itself (e.g. `C:\path\to\scrcpy-server`), NOT to its parent folder.
+* **Android Directory Conflict**: If you previously pushed a directory to the server path, `/data/local/tmp/scrcpy-server.jar` on the Android device might have been created as a folder. Run `adb shell rm -rf /data/local/tmp/scrcpy-server.jar` to delete it.
+* **Version Mismatch**: Ensure `SCRCPY_SERVER_VERSION` matches the exact version of the `scrcpy-server` file (e.g., `"3.3.4"`). If they mismatch, the Android JVM will fail with `java.lang.ClassNotFoundException: com.genymobile.scrcpy.Server`.
 
 **Screenshots are slow (~500ms)**
 Start a scrcpy session with `start_session` to enable the fast video stream path. Requires scrcpy and ffmpeg.
