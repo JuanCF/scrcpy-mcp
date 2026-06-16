@@ -180,6 +180,29 @@ async function inputTextViaScrcpy(serial: string, text: string): Promise<void> {
   sendControlMessage(serial, serializeInjectText(text))
 }
 
+// Shared output schema for input/gesture tools: a simple success + message result.
+const actionOutputSchema = {
+  success: z.boolean().describe("Whether the input action was dispatched to the device"),
+  message: z.string().describe("Human-readable description of the action performed"),
+}
+
+function actionOk(message: string) {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    structuredContent: { success: true, message },
+  }
+}
+
+function actionError(message: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ error: true, message, ...extra }),
+    }],
+    isError: true as const,
+  }
+}
+
 export function registerInputTools(server: McpServer): void {
   server.registerTool(
     "tap",
@@ -190,6 +213,14 @@ export function registerInputTools(server: McpServer): void {
         y: z.number().int().nonnegative().describe("Y coordinate"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Tap Screen",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ x, y, serial }) => {
       try {
@@ -198,7 +229,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await tapViaScrcpy(s, x, y)
-            return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
+            return actionOk(`Tapped at (${x}, ${y})`)
           } catch (error) {
             const err = error as Error
             console.error(`[tap] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -206,15 +237,10 @@ export function registerInputTools(server: McpServer): void {
         }
 
         await execAdbShell(s, `input tap ${x} ${y}`)
-        return { content: [{ type: "text", text: `Tapped at (${x}, ${y})` }] }
+        return actionOk(`Tapped at (${x}, ${y})`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )
@@ -231,6 +257,14 @@ export function registerInputTools(server: McpServer): void {
         duration: z.number().int().positive().optional().default(300).describe("Duration in milliseconds"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Swipe Gesture",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ x1, y1, x2, y2, duration, serial }) => {
       try {
@@ -239,12 +273,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await swipeViaScrcpy(s, x1, y1, x2, y2, duration)
-            return {
-              content: [{
-                type: "text",
-                text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
-              }],
-            }
+            return actionOk(`Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`)
           } catch (error) {
             const err = error as Error
             console.error(`[swipe] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -252,20 +281,10 @@ export function registerInputTools(server: McpServer): void {
         }
 
         await execAdbShell(s, `input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`)
-        return {
-          content: [{
-            type: "text",
-            text: `Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`,
-          }],
-        }
+        return actionOk(`Swiped from (${x1}, ${y1}) to (${x2}, ${y2}) in ${duration}ms`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )
@@ -280,6 +299,14 @@ export function registerInputTools(server: McpServer): void {
         duration: z.number().int().positive().optional().default(500).describe("Duration in milliseconds"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Long Press",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ x, y, duration, serial }) => {
       try {
@@ -288,12 +315,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await longPressViaScrcpy(s, x, y, duration)
-            return {
-              content: [{
-                type: "text",
-                text: `Long pressed at (${x}, ${y}) for ${duration}ms`,
-              }],
-            }
+            return actionOk(`Long pressed at (${x}, ${y}) for ${duration}ms`)
           } catch (error) {
             const err = error as Error
             console.error(`[long_press] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -301,15 +323,10 @@ export function registerInputTools(server: McpServer): void {
         }
 
         await execAdbShell(s, `input swipe ${x} ${y} ${x} ${y} ${duration}`)
-        return { content: [{ type: "text", text: `Long pressed at (${x}, ${y}) for ${duration}ms` }] }
+        return actionOk(`Long pressed at (${x}, ${y}) for ${duration}ms`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )
@@ -326,6 +343,14 @@ export function registerInputTools(server: McpServer): void {
         duration: z.number().int().positive().optional().default(300).describe("Duration in milliseconds"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Drag and Drop",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ startX, startY, endX, endY, duration, serial }) => {
       try {
@@ -334,12 +359,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await swipeViaScrcpy(s, startX, startY, endX, endY, duration)
-            return {
-              content: [{
-                type: "text",
-                text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
-              }],
-            }
+            return actionOk(`Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`)
           } catch (error) {
             const err = error as Error
             console.error(`[drag_drop] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -351,30 +371,15 @@ export function registerInputTools(server: McpServer): void {
 
         if (!isNaN(sdkLevel) && sdkLevel >= 26) {
           await execAdbShell(s, `input draganddrop ${startX} ${startY} ${endX} ${endY} ${duration}`)
-          return {
-            content: [{
-              type: "text",
-              text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`,
-            }],
-          }
+          return actionOk(`Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms`)
         }
 
         console.error(`[drag_drop] SDK ${sdkLevel} < 26, using swipe fallback`)
         await execAdbShell(s, `input swipe ${startX} ${startY} ${endX} ${endY} ${duration}`)
-        return {
-          content: [{
-            type: "text",
-            text: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)`,
-          }],
-        }
+        return actionOk(`Dragged from (${startX}, ${startY}) to (${endX}, ${endY}) in ${duration}ms (swipe fallback)`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )
@@ -387,6 +392,14 @@ export function registerInputTools(server: McpServer): void {
         text: z.string().describe("Text to type"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Type Text",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ text, serial }) => {
       try {
@@ -395,7 +408,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await inputTextViaScrcpy(s, text)
-            return { content: [{ type: "text", text: `Typed: "${text}"` }] }
+            return actionOk(`Typed: "${text}"`)
           } catch (error) {
             const err = error as Error
             console.error(`[input_text] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -404,15 +417,10 @@ export function registerInputTools(server: McpServer): void {
 
         const escaped = escapeTextForShell(text)
         await execAdbShell(s, `input text "${escaped}"`)
-        return { content: [{ type: "text", text: `Typed: "${text}"` }] }
+        return actionOk(`Typed: "${text}"`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )
@@ -425,6 +433,14 @@ export function registerInputTools(server: McpServer): void {
         keycode: z.union([z.string(), z.number()]).describe("Keycode name (e.g., 'HOME', 'BACK') or numeric value"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Send Key Event",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ keycode, serial }) => {
       let code: number
@@ -432,18 +448,9 @@ export function registerInputTools(server: McpServer): void {
         code = resolveKeycode(keycode)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: true,
-                message: err.message,
-                hint: "Use a known keycode name (HOME, BACK, ENTER, VOLUME_UP, etc.) or a numeric value.",
-              }),
-            },
-          ],
-        }
+        return actionError(err.message, {
+          hint: "Use a known keycode name (HOME, BACK, ENTER, VOLUME_UP, etc.) or a numeric value.",
+        })
       }
 
       try {
@@ -452,7 +459,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await keyEventViaScrcpy(s, code)
-            return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
+            return actionOk(`Sent key event: ${keycode} (${code})`)
           } catch (error) {
             const err = error as Error
             console.error(`[key_event] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -460,15 +467,10 @@ export function registerInputTools(server: McpServer): void {
         }
 
         await execAdbShell(s, `input keyevent ${code}`)
-        return { content: [{ type: "text", text: `Sent key event: ${keycode} (${code})` }] }
+        return actionOk(`Sent key event: ${keycode} (${code})`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )
@@ -484,6 +486,14 @@ export function registerInputTools(server: McpServer): void {
         dy: z.number().describe("Vertical scroll amount (negative=up, positive=down)"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Scroll",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ x, y, dx, dy, serial }) => {
       try {
@@ -492,12 +502,7 @@ export function registerInputTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await scrollViaScrcpy(s, x, y, dx, dy)
-            return {
-              content: [{
-                type: "text",
-                text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
-              }],
-            }
+            return actionOk(`Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`)
           } catch (error) {
             const err = error as Error
             console.error(`[scroll] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -511,20 +516,10 @@ export function registerInputTools(server: McpServer): void {
         const endY = Math.max(0, Math.round(y + dy * distance))
 
         await execAdbShell(s, `input swipe ${x} ${y} ${endX} ${endY} ${duration}`)
-        return {
-          content: [{
-            type: "text",
-            text: `Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`,
-          }],
-        }
+        return actionOk(`Scrolled at (${x}, ${y}) with delta (${dx}, ${dy})`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return actionError(err.message)
       }
     }
   )

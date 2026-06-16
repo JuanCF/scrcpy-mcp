@@ -13,13 +13,18 @@ describe("Device Tools Integration", () => {
   describe("device_list", () => {
     it("should list connected devices", async () => {
       const result = await callTool("device_list")
-      const devices = parseResult(result) as Array<{
-        serial: string
-        state: string
-        model?: string
-      }>
+      const parsed = parseResult(result) as {
+        count: number
+        devices: Array<{
+          serial: string
+          state: string
+          model?: string
+        }>
+      }
+      const devices = parsed.devices
 
       expect(Array.isArray(devices)).toBe(true)
+      expect(parsed.count).toBe(devices.length)
       expect(devices.length).toBeGreaterThan(0)
 
       const device = devices[0]

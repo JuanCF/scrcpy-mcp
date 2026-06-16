@@ -54,6 +54,17 @@ export function registerFileTools(server: McpServer): void {
         remotePath: z.string().describe("Destination path on the device (e.g., /sdcard/myfile.txt)"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the file was pushed"),
+        message: z.string().describe("adb push result or a confirmation message"),
+      },
+      annotations: {
+        title: "Push File to Device",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ localPath, remotePath, serial }) => {
       try {
@@ -63,6 +74,7 @@ export function registerFileTools(server: McpServer): void {
               type: "text",
               text: JSON.stringify({ error: true, message: "localPath must be an absolute path" }),
             }],
+            isError: true as const,
           }
         }
         if (!fs.existsSync(localPath)) {
@@ -71,16 +83,16 @@ export function registerFileTools(server: McpServer): void {
               type: "text",
               text: JSON.stringify({ error: true, message: `File not found: ${localPath}` }),
             }],
+            isError: true as const,
           }
         }
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "push", localPath, remotePath])
         const output = (stdout + stderr).trim()
+        const message = output || `Pushed ${localPath} to ${remotePath}`
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ success: true, message: output || `Pushed ${localPath} to ${remotePath}` }),
-          }],
+          content: [{ type: "text", text: JSON.stringify({ success: true, message }) }],
+          structuredContent: { success: true, message },
         }
       } catch (error) {
         const err = error as Error
@@ -89,6 +101,7 @@ export function registerFileTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }
@@ -103,6 +116,17 @@ export function registerFileTools(server: McpServer): void {
         localPath: z.string().describe("Destination absolute path on the host machine"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the file was pulled"),
+        message: z.string().describe("adb pull result or a confirmation message"),
+      },
+      annotations: {
+        title: "Pull File from Device",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ remotePath, localPath, serial }) => {
       try {
@@ -112,16 +136,16 @@ export function registerFileTools(server: McpServer): void {
               type: "text",
               text: JSON.stringify({ error: true, message: "localPath must be an absolute path" }),
             }],
+            isError: true as const,
           }
         }
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "pull", remotePath, localPath])
         const output = (stdout + stderr).trim()
+        const message = output || `Pulled ${remotePath} to ${localPath}`
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ success: true, message: output || `Pulled ${remotePath} to ${localPath}` }),
-          }],
+          content: [{ type: "text", text: JSON.stringify({ success: true, message }) }],
+          structuredContent: { success: true, message },
         }
       } catch (error) {
         const err = error as Error
@@ -130,6 +154,7 @@ export function registerFileTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }
@@ -143,6 +168,26 @@ export function registerFileTools(server: McpServer): void {
         path: z.string().describe("Absolute path to the directory on the device (e.g., /sdcard/)"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        path: z.string().describe("The directory that was listed"),
+        count: z.number().int().describe("Number of entries returned"),
+        entries: z.array(
+          z.object({
+            name: z.string().describe("Entry name"),
+            permissions: z.string().describe("Permission string (e.g. -rw-r--r--)"),
+            owner: z.string().describe("Owner user"),
+            group: z.string().describe("Owner group"),
+            size: z.number().describe("Size in bytes (0 for special files)"),
+            date: z.string().describe("Modification date/time"),
+            isDirectory: z.boolean().describe("Whether the entry is a directory"),
+          })
+        ).describe("Directory entries"),
+      },
+      annotations: {
+        title: "List Directory",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ path: devicePath, serial }) => {
       try {
@@ -150,11 +195,10 @@ export function registerFileTools(server: McpServer): void {
         const safePath = devicePath.replace(/'/g, "'\\''")
         const output = await execAdbShell(s, `ls -la '${safePath}'`)
         const entries = parseLsOutput(output)
+        const structured = { path: devicePath, count: entries.length, entries }
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ path: devicePath, count: entries.length, entries }),
-          }],
+          content: [{ type: "text", text: JSON.stringify(structured) }],
+          structuredContent: structured,
         }
       } catch (error) {
         const err = error as Error
@@ -163,6 +207,7 @@ export function registerFileTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }

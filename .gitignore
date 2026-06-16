@@ -10,3 +10,4 @@ coverage/
 *.tgz
 opencode.json
 .mcp.json
+*.mcpb

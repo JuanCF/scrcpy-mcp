@@ -13,6 +13,21 @@ export function isUninstallSuccess(output: string): boolean {
   return !output.startsWith("Failure") && !output.includes("DELETE_FAILED")
 }
 
+// Return a successful result whose structured content mirrors the serialized JSON text.
+function dataOk<T extends Record<string, unknown>>(structuredContent: T) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+    structuredContent,
+  }
+}
+
+function toolError(message: string) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ error: true, message }) }],
+    isError: true as const,
+  }
+}
+
 export function registerAppTools(server: McpServer): void {
   server.registerTool(
     "app_start",
@@ -21,6 +36,18 @@ export function registerAppTools(server: McpServer): void {
       inputSchema: {
         packageName: z.string().describe("Package name to launch (e.g., 'com.example.app'). Prefix with '+' to force-stop the app first (e.g., '+com.example.app')"),
         serial: z.string().optional().describe("Device serial number"),
+      },
+      outputSchema: {
+        success: z.boolean().describe("Whether the app was launched"),
+        message: z.string().describe("Human-readable description of the result"),
+        source: z.string().optional().describe("Mechanism used to launch the app (scrcpy or adb)"),
+      },
+      annotations: {
+        title: "Launch App",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
       },
     },
     async ({ packageName, serial }) => {
@@ -32,21 +59,11 @@ export function registerAppTools(server: McpServer): void {
         const actualPackageName = forceStop ? packageName.slice(1) : packageName
 
         if (!actualPackageName) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: "Package name is required" }),
-            }],
-          }
+          return toolError("Package name is required")
         }
 
         if (!isValidPackageName(actualPackageName)) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Invalid package name: ${actualPackageName}` }),
-            }],
-          }
+          return toolError(`Invalid package name: ${actualPackageName}`)
         }
 
         // Use scrcpy fast path if session is active
@@ -63,18 +80,13 @@ export function registerAppTools(server: McpServer): void {
 
           try {
             await startAppViaScrcpy(s, actualPackageName)
-            return {
-              content: [{
-                type: "text",
-                text: JSON.stringify({
-                  success: true,
-                  message: forceStop
-                    ? `App force-stopped and started: ${actualPackageName}`
-                    : `App started: ${actualPackageName}`,
-                  source: "scrcpy",
-                }),
-              }],
-            }
+            return dataOk({
+              success: true,
+              message: forceStop
+                ? `App force-stopped and started: ${actualPackageName}`
+                : `App started: ${actualPackageName}`,
+              source: "scrcpy",
+            })
           } catch (error) {
             const err = error as Error
             console.error(`[app_start] scrcpy failed, falling back to ADB: ${err.message}`)
@@ -95,26 +107,16 @@ export function registerAppTools(server: McpServer): void {
         // Launch the app via ADB using monkey to resolve the correct launcher activity
         await execAdbShell(s, `monkey -p ${actualPackageName} -c android.intent.category.LAUNCHER 1`)
 
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              success: true,
-              message: forceStop
-                ? `App force-stopped and started: ${actualPackageName}`
-                : `App started: ${actualPackageName}`,
-              source: "adb",
-            }),
-          }],
-        }
+        return dataOk({
+          success: true,
+          message: forceStop
+            ? `App force-stopped and started: ${actualPackageName}`
+            : `App started: ${actualPackageName}`,
+          source: "adb",
+        })
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return toolError(err.message)
       }
     }
   )
@@ -127,33 +129,29 @@ export function registerAppTools(server: McpServer): void {
         packageName: z.string().describe("Package name to force-stop (e.g., 'com.example.app')"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the app was force-stopped"),
+        message: z.string().describe("Human-readable description of the result"),
+      },
+      annotations: {
+        title: "Force-Stop App",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ packageName, serial }) => {
       try {
         const s = await resolveSerial(serial)
         if (!isValidPackageName(packageName)) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Invalid package name: ${packageName}` }),
-            }],
-          }
+          return toolError(`Invalid package name: ${packageName}`)
         }
         await execAdbShell(s, `am force-stop ${packageName}`)
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ success: true, message: `App stopped: ${packageName}` }),
-          }],
-        }
+        return dataOk({ success: true, message: `App stopped: ${packageName}` })
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return toolError(err.message)
       }
     }
   )
@@ -166,54 +164,40 @@ export function registerAppTools(server: McpServer): void {
         apkPath: z.string().describe("Absolute path to the APK file on the host machine"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the APK installed successfully"),
+        message: z.string().describe("Install result or error output from adb"),
+      },
+      annotations: {
+        title: "Install APK",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ apkPath, serial }) => {
       try {
         if (path.extname(apkPath).toLowerCase() !== ".apk") {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: "Invalid apkPath: invalid extension, must be a .apk file" }),
-            }],
-          }
+          return toolError("Invalid apkPath: invalid extension, must be a .apk file")
         }
         if (!path.isAbsolute(apkPath)) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: "Invalid apkPath: must be an absolute path" }),
-            }],
-          }
+          return toolError("Invalid apkPath: must be an absolute path")
         }
         if (!fs.existsSync(apkPath)) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: "Invalid apkPath: file does not exist" }),
-            }],
-          }
+          return toolError("Invalid apkPath: file does not exist")
         }
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "install", "-r", apkPath])
         const output = (stdout + stderr).trim()
         const success = output.includes("Success")
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              success,
-              message: success ? `APK installed: ${apkPath}` : output,
-            }),
-          }],
-        }
+        return dataOk({
+          success,
+          message: success ? `APK installed: ${apkPath}` : output,
+        })
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return toolError(err.message)
       }
     }
   )
@@ -226,38 +210,34 @@ export function registerAppTools(server: McpServer): void {
         packageName: z.string().describe("Package name to uninstall (e.g., 'com.example.app')"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the app was uninstalled"),
+        message: z.string().describe("Uninstall result or error output from adb"),
+      },
+      annotations: {
+        title: "Uninstall App",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ packageName, serial }) => {
       try {
         if (!isValidPackageName(packageName)) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Invalid package name: ${packageName}` }),
-            }],
-          }
+          return toolError(`Invalid package name: ${packageName}`)
         }
         const s = await resolveSerial(serial)
         const { stdout, stderr } = await execAdb(["-s", s, "uninstall", packageName])
         const output = (stdout + stderr).trim()
         const success = isUninstallSuccess(output)
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              success,
-              message: success ? (output || `App uninstalled: ${packageName}`) : output,
-            }),
-          }],
-        }
+        return dataOk({
+          success,
+          message: success ? (output || `App uninstalled: ${packageName}`) : output,
+        })
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return toolError(err.message)
       }
     }
   )
@@ -270,6 +250,15 @@ export function registerAppTools(server: McpServer): void {
         filter: z.string().optional().describe("Filter packages by name (partial match, case-insensitive)"),
         system: z.boolean().optional().describe("true = system apps only, false = third-party only, omit = all"),
         serial: z.string().optional().describe("Device serial number"),
+      },
+      outputSchema: {
+        count: z.number().int().describe("Number of packages returned"),
+        packages: z.array(z.string()).describe("Installed package names"),
+      },
+      annotations: {
+        title: "List Installed Apps",
+        readOnlyHint: true,
+        openWorldHint: true,
       },
     },
     async ({ filter, system, serial }) => {
@@ -290,20 +279,10 @@ export function registerAppTools(server: McpServer): void {
           const lowerFilter = filter.toLowerCase()
           packages = packages.filter((p) => p.toLowerCase().includes(lowerFilter))
         }
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ packages, count: packages.length }),
-          }],
-        }
+        return dataOk({ count: packages.length, packages })
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return toolError(err.message)
       }
     }
   )
@@ -315,6 +294,15 @@ export function registerAppTools(server: McpServer): void {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        packageName: z.string().describe("Package name of the foreground app"),
+        activity: z.string().nullable().describe("Foreground activity name, if resolvable"),
+      },
+      annotations: {
+        title: "Current Foreground App",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       try {
@@ -325,29 +313,14 @@ export function registerAppTools(server: McpServer): void {
           /mResumedActivity[=: ]+ActivityRecord\{[^}]+\s+([^\s/}]+)(\/[^\s}]+)?/
         )
         if (!match) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ error: true, message: "Could not determine current activity" }),
-            }],
-          }
+          return toolError("Could not determine current activity")
         }
         const packageName = match[1]
         const activity = match[2] ? match[2].replace(/^\/+/, "") : null
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ packageName, activity }),
-          }],
-        }
+        return dataOk({ packageName, activity })
       } catch (error) {
         const err = error as Error
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: true, message: err.message }),
-          }],
-        }
+        return toolError(err.message)
       }
     }
   )

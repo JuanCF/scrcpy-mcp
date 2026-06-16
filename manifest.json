@@ -1,0 +1,235 @@
+{
+  "manifest_version": "0.2",
+  "name": "scrcpy-mcp",
+  "version": "0.2.3",
+  "description": "MCP server for Android device control via ADB and scrcpy — gives AI agents vision and control over Android devices",
+  "homepage": "https://github.com/JuanCF/scrcpy-mcp",
+  "icon": "icon.png",
+  "author": {
+    "name": "Juan C. Flores"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "app_current",
+      "description": "Get the currently foregrounded app package name and activity."
+    },
+    {
+      "name": "app_install",
+      "description": "Install an APK file on the device from the host machine."
+    },
+    {
+      "name": "app_list",
+      "description": "List installed packages on the device. Optionally filter by name or restrict to system/third-party apps."
+    },
+    {
+      "name": "app_start",
+      "description": "Launch an app on the device. Uses scrcpy START_APP when a session is active for faster launch, falls back to ADB `am start`. Supports force-stop prefix (+) to stop the app before launching."
+    },
+    {
+      "name": "app_stop",
+      "description": "Force-stop an app on the device."
+    },
+    {
+      "name": "app_uninstall",
+      "description": "Uninstall an app from the device."
+    },
+    {
+      "name": "clipboard_get",
+      "description": "Get the current clipboard content from the device. Uses scrcpy GET_CLIPBOARD when a session is active (works on Android 10+), falls back to ADB clipboard commands."
+    },
+    {
+      "name": "clipboard_set",
+      "description": "Set the clipboard content on the device. Uses scrcpy SET_CLIPBOARD when a session is active (with optional paste flag), falls back to ADB clipboard commands."
+    },
+    {
+      "name": "collapse_panels",
+      "description": "Collapse all open panels (notification, settings) (requires active scrcpy session)"
+    },
+    {
+      "name": "connect_wifi",
+      "description": "Enable WiFi ADB and connect to the device wirelessly. Returns the connection address."
+    },
+    {
+      "name": "device_info",
+      "description": "Get detailed info about a device: model, Android version, screen size, SDK level, battery level"
+    },
+    {
+      "name": "device_list",
+      "description": "List all connected Android devices with their serial numbers, state, and model"
+    },
+    {
+      "name": "disconnect_wifi",
+      "description": "Disconnect from a wireless ADB device"
+    },
+    {
+      "name": "drag_drop",
+      "description": "Perform a drag and drop gesture from one point to another. Uses input draganddrop on Android 8.0+ (API 26), falls back to swipe on older versions."
+    },
+    {
+      "name": "expand_notifications",
+      "description": "Expand the notification panel (requires active scrcpy session)"
+    },
+    {
+      "name": "expand_settings",
+      "description": "Expand the quick settings panel (requires active scrcpy session)"
+    },
+    {
+      "name": "file_list",
+      "description": "List directory contents on the device."
+    },
+    {
+      "name": "file_pull",
+      "description": "Pull a file from the device to the host machine."
+    },
+    {
+      "name": "file_push",
+      "description": "Push a file from the host machine to the device."
+    },
+    {
+      "name": "input_text",
+      "description": "Type text into the currently focused input field"
+    },
+    {
+      "name": "key_event",
+      "description": "Send a key event to the device. Supports keycodes like HOME, BACK, ENTER, VOLUME_UP, etc."
+    },
+    {
+      "name": "long_press",
+      "description": "Perform a long press at the specified coordinates"
+    },
+    {
+      "name": "rotate_device",
+      "description": "Rotate the device screen (requires active scrcpy session)"
+    },
+    {
+      "name": "screen_off",
+      "description": "Turn the device screen off"
+    },
+    {
+      "name": "screen_on",
+      "description": "Wake the device screen (turn screen on)"
+    },
+    {
+      "name": "screen_record_start",
+      "description": "Start recording the screen. Recording continues until screen_record_stop is called."
+    },
+    {
+      "name": "screen_record_stop",
+      "description": "Stop screen recording and optionally pull the file to the host."
+    },
+    {
+      "name": "screenshot",
+      "description": "Take a screenshot of the Android device screen. Returns the image as base64."
+    },
+    {
+      "name": "scroll",
+      "description": "Scroll at the specified position. dx and dy are scroll amounts (-1 to 1 range approximated for ADB)."
+    },
+    {
+      "name": "shell_exec",
+      "description": "Execute an arbitrary ADB shell command on the device and return the output. Use this for any device operation not covered by other tools."
+    },
+    {
+      "name": "start_session",
+      "description": "Start a scrcpy session for fast input control and screenshots. When a session is active, tap/swipe/text/screenshot are 10-50x faster. Requires scrcpy-server to be installed."
+    },
+    {
+      "name": "start_video_stream",
+      "description": "Start an HTTP MJPEG video stream of the device screen. Opens a native ffplay window that connects to the stream URL. Requires an active scrcpy session."
+    },
+    {
+      "name": "stop_session",
+      "description": "Stop the active scrcpy session. Tools will fall back to ADB commands."
+    },
+    {
+      "name": "stop_video_stream",
+      "description": "Stop the HTTP MJPEG video stream and close the viewer window for a device."
+    },
+    {
+      "name": "swipe",
+      "description": "Perform a swipe gesture from one point to another"
+    },
+    {
+      "name": "tap",
+      "description": "Tap at the specified screen coordinates"
+    },
+    {
+      "name": "ui_dump",
+      "description": "Dump the full UI hierarchy of the current screen as XML. Useful for understanding screen structure before using ui_find_element."
+    },
+    {
+      "name": "ui_find_element",
+      "description": "Find UI elements on screen by text, resource ID, class name, or content description. Returns matching elements with their tap coordinates. At least one search criterion must be provided."
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">= 22"
+    }
+  },
+  "user_config": {
+    "ADB_PATH": {
+      "type": "string",
+      "title": "Path TO ADB BINARY",
+      "description": "Path to ADB binary (optional, default: adb)",
+      "required": false,
+      "sensitive": false
+    },
+    "ANDROID_SERIAL": {
+      "type": "string",
+      "title": "ANDROID SERIAL NUMBER",
+      "description": "Device serial number (optional, for multiple devices)",
+      "required": false,
+      "sensitive": false
+    },
+    "SCRCPY_SERVER_PATH": {
+      "type": "string",
+      "title": "SCRCPY BINARY PATH",
+      "description": "Path to scrcpy-server binary (optional)",
+      "required": false,
+      "sensitive": false
+    },
+    "SCRCPY_SERVER_VERSION": {
+      "type": "string",
+      "title": "SCRCPY VERSION NUMBER",
+      "description": "Version of scrcpy-server (optional)",
+      "required": false,
+      "sensitive": false
+    },
+    "FFMPEG_PATH": {
+      "type": "string",
+      "title": "PATH TO FFMPEG BINARY",
+      "description": "Path to ffmpeg binary (optional, default: ffmpeg)",
+      "required": false,
+      "sensitive": false
+    }
+  },
+  "keywords": [
+    "android",
+    "adb",
+    "scrcpy",
+    "mobile",
+    "automation"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JuanCF/scrcpy-mcp.git"
+  }
+}

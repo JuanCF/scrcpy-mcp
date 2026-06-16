@@ -13,6 +13,22 @@ export function registerVideoTools(server: McpServer): void {
         serial: z.string().optional().describe("Device serial number"),
         port: z.number().int().min(1024).max(65535).optional().default(7183).describe("HTTP port for the MJPEG stream (default 7183)"),
       },
+      outputSchema: {
+        status: z.string().describe("Stream status (e.g. 'started')"),
+        url: z.string().describe("HTTP URL of the MJPEG stream"),
+        screenSize: z.object({
+          width: z.number().int().describe("scrcpy video frame width"),
+          height: z.number().int().describe("scrcpy video frame height"),
+        }).describe("scrcpy video frame size"),
+        viewer: z.string().describe("Viewer status message"),
+      },
+      annotations: {
+        title: "Start Video Stream",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ serial, port }) => {
       try {
@@ -26,6 +42,7 @@ export function registerVideoTools(server: McpServer): void {
                 message: "No active scrcpy session. Call start_session first.",
               }, null, 2),
             }],
+            isError: true as const,
           }
         }
         const session = getSession(s)
@@ -38,6 +55,7 @@ export function registerVideoTools(server: McpServer): void {
                 message: "No active scrcpy session. Call start_session first.",
               }, null, 2),
             }],
+            isError: true as const,
           }
         }
         const resolvedPort = port
@@ -47,16 +65,15 @@ export function registerVideoTools(server: McpServer): void {
           s, session.screenSize.width, session.screenSize.height, resolvedPort
         )
 
+        const structured = {
+          status: "started",
+          url,
+          screenSize: session.screenSize,
+          viewer: viewerLaunched ? "ffplay window opened" : "ffplay not available — open URL manually",
+        }
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              status: "started",
-              url,
-              screenSize: session.screenSize,
-              viewer: viewerLaunched ? "ffplay window opened" : "ffplay not available — open URL manually",
-            }, null, 2),
-          }],
+          content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+          structuredContent: structured,
         }
       } catch (error) {
         const err = error as Error
@@ -68,6 +85,7 @@ export function registerVideoTools(server: McpServer): void {
               message: `Failed to start video stream: ${err.message}`,
             }, null, 2),
           }],
+          isError: true as const,
         }
       }
     }
@@ -79,6 +97,17 @@ export function registerVideoTools(server: McpServer): void {
       description: "Stop the HTTP MJPEG video stream and close the viewer window for a device.",
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
+      },
+      outputSchema: {
+        status: z.string().describe("Stream status (e.g. 'stopped')"),
+        message: z.string().describe("Human-readable status message"),
+      },
+      annotations: {
+        title: "Stop Video Stream",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
       },
     },
     async ({ serial }) => {
@@ -93,17 +122,14 @@ export function registerVideoTools(server: McpServer): void {
                 message: "No video stream is running for this device.",
               }, null, 2),
             }],
+            isError: true as const,
           }
         }
         stopMjpegServer(s)
+        const structured = { status: "stopped", message: "Video stream stopped." }
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              status: "stopped",
-              message: "Video stream stopped.",
-            }, null, 2),
-          }],
+          content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+          structuredContent: structured,
         }
       } catch (error) {
         const err = error as Error
@@ -115,6 +141,7 @@ export function registerVideoTools(server: McpServer): void {
               message: `Failed to stop video stream: ${err.message}`,
             }, null, 2),
           }],
+          isError: true as const,
         }
       }
     }

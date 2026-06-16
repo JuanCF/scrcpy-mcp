@@ -32,17 +32,59 @@ const requireActiveSession = (
   return null
 }
 
+// Shared output schema for device action tools: a simple success + message result.
+const actionOutputSchema = {
+  success: z.boolean().describe("Whether the action succeeded"),
+  message: z.string().describe("Human-readable description of the result"),
+}
+
+function actionOk(message: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    structuredContent: { success: true, message, ...extra },
+  }
+}
+
+function toolError(message: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ error: true, message, ...extra }),
+    }],
+    isError: true as const,
+  }
+}
+
 export function registerDeviceTools(server: McpServer) {
   server.registerTool(
     "device_list",
     {
       description: "List all connected Android devices with their serial numbers, state, and model",
       inputSchema: {},
+      outputSchema: {
+        count: z.number().int().describe("Number of connected devices"),
+        devices: z.array(
+          z.object({
+            serial: z.string().describe("Device serial number"),
+            state: z.string().describe("Connection state (device, unauthorized, offline, ...)"),
+            model: z.string().optional().describe("Device model"),
+            product: z.string().optional().describe("Product name"),
+            transportId: z.string().optional().describe("ADB transport id"),
+          })
+        ).describe("Connected devices"),
+      },
+      annotations: {
+        title: "List Devices",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async () => {
       const devices = await getDevices();
+      const structured = { count: devices.length, devices };
       return {
-        content: [{ type: "text", text: JSON.stringify(devices, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
+        structuredContent: structured,
       };
     }
   );
@@ -56,6 +98,22 @@ export function registerDeviceTools(server: McpServer) {
           .string()
           .optional()
           .describe("Device serial number. If omitted, uses the only connected device."),
+      },
+      outputSchema: {
+        serial: z.string().describe("Resolved device serial"),
+        model: z.string().nullable().describe("Device model"),
+        brand: z.string().nullable().describe("Device brand"),
+        manufacturer: z.string().nullable().describe("Device manufacturer"),
+        androidVersion: z.string().nullable().describe("Android release version"),
+        sdkLevel: z.number().int().nullable().describe("Android SDK API level"),
+        screenWidth: z.number().int().describe("Screen width in pixels"),
+        screenHeight: z.number().int().describe("Screen height in pixels"),
+        batteryLevel: z.number().int().nullable().describe("Battery level percentage"),
+      },
+      annotations: {
+        title: "Device Info",
+        readOnlyHint: true,
+        openWorldHint: true,
       },
     },
     async ({ serial }) => {
@@ -89,17 +147,11 @@ export function registerDeviceTools(server: McpServer) {
 
         return {
           content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
+          structuredContent: info,
         };
       } catch (error) {
         const err = error as Error;
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to get device info: ${err.message}` }),
-            },
-          ],
-        };
+        return toolError(`Failed to get device info: ${err.message}`);
       }
     }
   );
@@ -111,32 +163,29 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Turn Screen On",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       try {
         const s = await resolveSerial(serial);
-        
+
         if (hasActiveSession(s)) {
           sendControlMessage(s, serializeSetDisplayPower(true));
-          return {
-            content: [{ type: "text", text: `Screen turned on for device ${s} (via scrcpy)` }],
-          };
+          return actionOk(`Screen turned on for device ${s} (via scrcpy)`);
         }
-        
+
         await execAdbShell(s, "input keyevent KEYCODE_WAKEUP");
-        return {
-          content: [{ type: "text", text: `Screen turned on for device ${s}` }],
-        };
+        return actionOk(`Screen turned on for device ${s}`);
       } catch (error) {
         const err = error as Error;
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to turn screen on: ${err.message}` }),
-            },
-          ],
-        };
+        return toolError(`Failed to turn screen on: ${err.message}`);
       }
     }
   );
@@ -148,32 +197,29 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Turn Screen Off",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       try {
         const s = await resolveSerial(serial);
-        
+
         if (hasActiveSession(s)) {
           sendControlMessage(s, serializeSetDisplayPower(false));
-          return {
-            content: [{ type: "text", text: `Screen turned off for device ${s} (via scrcpy)` }],
-          };
+          return actionOk(`Screen turned off for device ${s} (via scrcpy)`);
         }
-        
+
         await execAdbShell(s, "input keyevent KEYCODE_SLEEP");
-        return {
-          content: [{ type: "text", text: `Screen turned off for device ${s}` }],
-        };
+        return actionOk(`Screen turned off for device ${s}`);
       } catch (error) {
         const err = error as Error;
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to turn screen off: ${err.message}` }),
-            },
-          ],
-        };
+        return toolError(`Failed to turn screen off: ${err.message}`);
       }
     }
   );
@@ -191,6 +237,18 @@ export function registerDeviceTools(server: McpServer) {
           .describe("TCP port for ADB connection (default: 5555)"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the wireless connection was established"),
+        address: z.string().optional().describe("The host:port the device was connected on"),
+        message: z.string().describe("Human-readable description of the result"),
+      },
+      annotations: {
+        title: "Connect over Wi-Fi",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ port, serial }) => {
       try {
@@ -203,38 +261,17 @@ export function registerDeviceTools(server: McpServer) {
         const ipOutput = await execAdbShell(s, "ip route");
         const ipMatch = ipOutput.match(/src\s+(\d+\.\d+\.\d+\.\d+)/);
         if (!ipMatch) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ error: true, message: "Could not determine device IP address. Ensure the device is connected to WiFi." }),
-              },
-            ],
-          };
+          return toolError("Could not determine device IP address. Ensure the device is connected to WiFi.");
         }
         const ip = ipMatch[1];
         const address = `${ip}:${port}`;
 
         await execAdb(["connect", address], 10000);
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ address, message: `Connected to ${address}` }),
-            },
-          ],
-        };
+        return actionOk(`Connected to ${address}`, { address });
       } catch (error) {
         const err = error as Error;
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ error: true, message: `Failed to connect via WiFi: ${err.message}` }),
-            },
-          ],
-        };
+        return toolError(`Failed to connect via WiFi: ${err.message}`);
       }
     }
   );
@@ -246,18 +283,22 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         address: z.string().describe("Device address (e.g., 192.168.1.100:5555)"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Disconnect Wi-Fi",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ address }) => {
       try {
         await execAdb(["disconnect", address]);
-        return {
-          content: [{ type: "text", text: `Disconnected from ${address}` }],
-        };
+        return actionOk(`Disconnected from ${address}`);
       } catch (error) {
         const err = error as Error;
-        return {
-          content: [{ type: "text", text: JSON.stringify({ error: true, message: `Failed to disconnect from ${address}: ${err.message}` }) }],
-        };
+        return toolError(`Failed to disconnect from ${address}: ${err.message}`);
       }
     }
   );
@@ -269,6 +310,14 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Rotate Device",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       let s = "unknown"
@@ -277,29 +326,14 @@ export function registerDeviceTools(server: McpServer) {
 
         const sessionError = requireActiveSession(s, "rotate_device")
         if (sessionError) {
-          return {
-            content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          }
+          return toolError(sessionError.message)
         }
 
         sendControlMessage(s, serializeRotateDevice())
-        return {
-          content: [{ type: "text", text: `Device rotated for ${s}` }],
-        }
+        return actionOk(`Device rotated for ${s}`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: true,
-                serial: s || "unknown",
-                message: `Failed to rotate device: ${err.message}`,
-              }),
-            },
-          ],
-        }
+        return toolError(`Failed to rotate device: ${err.message}`, { serial: s || "unknown" })
       }
     }
   )
@@ -311,6 +345,14 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Expand Notifications",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       let s = "unknown"
@@ -319,29 +361,14 @@ export function registerDeviceTools(server: McpServer) {
 
         const sessionError = requireActiveSession(s, "expand_notifications")
         if (sessionError) {
-          return {
-            content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          }
+          return toolError(sessionError.message)
         }
 
         sendControlMessage(s, serializeExpandNotificationPanel())
-        return {
-          content: [{ type: "text", text: `Notification panel expanded for ${s}` }],
-        }
+        return actionOk(`Notification panel expanded for ${s}`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: true,
-                serial: s,
-                message: `Failed to expand notifications: ${err.message}`,
-              }),
-            },
-          ],
-        }
+        return toolError(`Failed to expand notifications: ${err.message}`, { serial: s })
       }
     }
   )
@@ -353,6 +380,14 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Expand Quick Settings",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       let s = "unknown"
@@ -361,29 +396,14 @@ export function registerDeviceTools(server: McpServer) {
 
         const sessionError = requireActiveSession(s, "expand_settings")
         if (sessionError) {
-          return {
-            content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          }
+          return toolError(sessionError.message)
         }
 
         sendControlMessage(s, serializeExpandSettingsPanel())
-        return {
-          content: [{ type: "text", text: `Quick settings panel expanded for ${s}` }],
-        }
+        return actionOk(`Quick settings panel expanded for ${s}`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: true,
-                serial: s,
-                message: `Failed to expand settings: ${err.message}`,
-              }),
-            },
-          ],
-        }
+        return toolError(`Failed to expand settings: ${err.message}`, { serial: s })
       }
     }
   )
@@ -395,6 +415,14 @@ export function registerDeviceTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: actionOutputSchema,
+      annotations: {
+        title: "Collapse Panels",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       let s = "unknown"
@@ -403,29 +431,14 @@ export function registerDeviceTools(server: McpServer) {
 
         const sessionError = requireActiveSession(s, "collapse_panels")
         if (sessionError) {
-          return {
-            content: [{ type: "text", text: JSON.stringify(sessionError) }],
-          }
+          return toolError(sessionError.message)
         }
 
         sendControlMessage(s, serializeCollapsePanels())
-        return {
-          content: [{ type: "text", text: `Panels collapsed for ${s}` }],
-        }
+        return actionOk(`Panels collapsed for ${s}`)
       } catch (error) {
         const err = error as Error
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: true,
-                serial: s,
-                message: `Failed to collapse panels: ${err.message}`,
-              }),
-            },
-          ],
-        }
+        return toolError(`Failed to collapse panels: ${err.message}`, { serial: s })
       }
     }
   )

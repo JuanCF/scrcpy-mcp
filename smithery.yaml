@@ -1,0 +1,35 @@
+name: scrcpy-mcp
+version: 0.2.3
+description: MCP server for Android device control via ADB and scrcpy — gives AI agents vision and control over Android devices
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      ADB_PATH:
+        type: string
+        description: Path to the ADB binary
+      ANDROID_SERIAL:
+        type: string
+        description: Default device serial, overrides auto-detection
+      SCRCPY_SERVER_PATH:
+        type: string
+        description: Path to the scrcpy-server binary
+      SCRCPY_SERVER_VERSION:
+        type: string
+        description: Version of the scrcpy-server binary
+      FFMPEG_PATH:
+        type: string
+        description: Path to the ffmpeg binary
+  commandFunction: |
+    (config) => ({
+      command: "npx",
+      args: ["scrcpy-mcp"],
+      env: {
+        ...(config.ADB_PATH && { ADB_PATH: config.ADB_PATH }),
+        ...(config.ANDROID_SERIAL && { ANDROID_SERIAL: config.ANDROID_SERIAL }),
+        ...(config.SCRCPY_SERVER_PATH && { SCRCPY_SERVER_PATH: config.SCRCPY_SERVER_PATH }),
+        ...(config.SCRCPY_SERVER_VERSION && { SCRCPY_SERVER_VERSION: config.SCRCPY_SERVER_VERSION }),
+        ...(config.FFMPEG_PATH && { FFMPEG_PATH: config.FFMPEG_PATH }),
+      }
+    })

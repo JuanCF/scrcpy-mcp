@@ -101,6 +101,15 @@ export function registerClipboardTools(server: McpServer): void {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        content: z.string().describe("Current clipboard text on the device"),
+        source: z.string().describe("Mechanism used to read the clipboard (scrcpy or adb)"),
+      },
+      annotations: {
+        title: "Get Clipboard",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       try {
@@ -111,10 +120,8 @@ export function registerClipboardTools(server: McpServer): void {
             const content = await getClipboardViaScrcpy(s)
             if (content !== null) {
               return {
-                content: [{
-                  type: "text",
-                  text: JSON.stringify({ content, source: "scrcpy" }),
-                }],
+                content: [{ type: "text", text: JSON.stringify({ content, source: "scrcpy" }) }],
+                structuredContent: { content, source: "scrcpy" },
               }
             }
             console.error("[clipboard_get] scrcpy returned null, trying ADB fallback")
@@ -127,10 +134,8 @@ export function registerClipboardTools(server: McpServer): void {
         const content = await getClipboardViaAdb(s)
         if (content !== null) {
           return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ content, source: "adb" }),
-            }],
+            content: [{ type: "text", text: JSON.stringify({ content, source: "adb" }) }],
+            structuredContent: { content, source: "adb" },
           }
         }
 
@@ -142,6 +147,7 @@ export function registerClipboardTools(server: McpServer): void {
               message: "Could not retrieve clipboard content. On Android 10+, start a scrcpy session for reliable clipboard access.",
             }),
           }],
+          isError: true as const,
         }
       } catch (error) {
         const err = error as Error
@@ -150,6 +156,7 @@ export function registerClipboardTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }
@@ -164,6 +171,18 @@ export function registerClipboardTools(server: McpServer): void {
         paste: z.boolean().optional().default(false).describe("Also simulate paste action (scrcpy only)"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether the clipboard was set"),
+        message: z.string().describe("Human-readable description of the result"),
+        source: z.string().optional().describe("Mechanism used to set the clipboard (scrcpy or adb)"),
+      },
+      annotations: {
+        title: "Set Clipboard",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ text, paste, serial }) => {
       try {
@@ -172,17 +191,16 @@ export function registerClipboardTools(server: McpServer): void {
         if (hasActiveSession(s)) {
           try {
             await setClipboardViaScrcpy(s, text, paste)
+            const structured = {
+              success: true,
+              message: paste
+                ? `Clipboard set and paste triggered: "${text}"`
+                : `Clipboard set: "${text}"`,
+              source: "scrcpy",
+            }
             return {
-              content: [{
-                type: "text",
-                text: JSON.stringify({
-                  success: true,
-                  message: paste
-                    ? `Clipboard set and paste triggered: "${text}"`
-                    : `Clipboard set: "${text}"`,
-                  source: "scrcpy",
-                }),
-              }],
+              content: [{ type: "text", text: JSON.stringify(structured) }],
+              structuredContent: structured,
             }
           } catch (error) {
             const err = error as Error
@@ -195,15 +213,14 @@ export function registerClipboardTools(server: McpServer): void {
           const pasteNote = paste
             ? " Note: Paste action not performed (requires active scrcpy session)."
             : ""
+          const structured = {
+            success: true,
+            message: `Clipboard set: "${text}".${pasteNote}`,
+            source: "adb",
+          }
           return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                success: true,
-                message: `Clipboard set: "${text}".${pasteNote}`,
-                source: "adb",
-              }),
-            }],
+            content: [{ type: "text", text: JSON.stringify(structured) }],
+            structuredContent: structured,
           }
         }
 
@@ -215,6 +232,7 @@ export function registerClipboardTools(server: McpServer): void {
               message: "Could not set clipboard content. On Android 10+, start a scrcpy session for reliable clipboard access.",
             }),
           }],
+          isError: true as const,
         }
       } catch (error) {
         const err = error as Error
@@ -223,6 +241,7 @@ export function registerClipboardTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }

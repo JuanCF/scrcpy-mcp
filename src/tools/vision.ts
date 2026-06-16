@@ -20,10 +20,20 @@ export function registerVisionTools(server: McpServer) {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        mimeType: z.string().describe("MIME type of the returned image"),
+        encoding: z.string().describe("Encoding of the image data in the content block"),
+        source: z.string().describe("Capture path used (scrcpy frame or adb screencap)"),
+      },
+      annotations: {
+        title: "Screenshot",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       const s = await resolveSerial(serial);
-      
+
       const session = getSession(s);
       if (session && session.controlSocket && !session.controlSocket.destroyed) {
         const frame = getLatestFrame(s);
@@ -36,12 +46,13 @@ export function registerVisionTools(server: McpServer) {
                 mimeType: "image/jpeg",
               },
             ],
+            structuredContent: { mimeType: "image/jpeg", encoding: "base64", source: "scrcpy" },
           };
         }
       }
-      
+
       const pngBuffer = await execAdbRaw(["-s", s, "exec-out", "screencap", "-p"]);
-      
+
       return {
         content: [
           {
@@ -50,6 +61,7 @@ export function registerVisionTools(server: McpServer) {
             mimeType: "image/png",
           },
         ],
+        structuredContent: { mimeType: "image/png", encoding: "base64", source: "adb" },
       };
     }
   );
@@ -70,18 +82,27 @@ export function registerVisionTools(server: McpServer) {
           .optional()
           .describe("Max recording duration in seconds (optional, device limit usually 180s)"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether recording was started"),
+        message: z.string().describe("Human-readable status message"),
+        remotePath: z.string().optional().describe("Path on the device where the recording is saved"),
+      },
+      annotations: {
+        title: "Start Screen Recording",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ serial, remotePath, duration }) => {
       const s = await resolveSerial(serial);
-      
+
       if (recordingSessions.has(s)) {
+        const message = `Recording already in progress for device ${s}`;
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Recording already in progress for device ${s}`,
-            },
-          ],
+          content: [{ type: "text" as const, text: message }],
+          structuredContent: { success: false, message },
         };
       }
 
@@ -103,6 +124,7 @@ export function registerVisionTools(server: McpServer) {
                 text: `Failed to start recording on device ${s}: ${err.message}`,
               },
             ],
+            isError: true as const,
           })
         })
 
@@ -117,13 +139,10 @@ export function registerVisionTools(server: McpServer) {
             console.error(`[screenrecord ${s}] ${data}`)
           })
 
+          const message = `Recording started on device ${s}. Will save to ${remotePath}`
           resolve({
-            content: [
-              {
-                type: "text" as const,
-                text: `Recording started on device ${s}. Will save to ${remotePath}`,
-              },
-            ],
+            content: [{ type: "text" as const, text: message }],
+            structuredContent: { success: true, message, remotePath },
           })
         })
       })
@@ -146,27 +165,36 @@ export function registerVisionTools(server: McpServer) {
           .optional()
           .describe("Local path to save recording (only if pullToHost is true)"),
       },
+      outputSchema: {
+        success: z.boolean().describe("Whether recording was stopped"),
+        message: z.string().describe("Human-readable status message"),
+        localPath: z.string().optional().describe("Host path the recording was pulled to, if requested"),
+      },
+      annotations: {
+        title: "Stop Screen Recording",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial, pullToHost, localPath }) => {
       const s = await resolveSerial(serial);
-      
+
       const session = recordingSessions.get(s);
       if (!session) {
+        const message = `No recording in progress for device ${s}`;
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `No recording in progress for device ${s}`,
-            },
-          ],
+          content: [{ type: "text" as const, text: message }],
+          structuredContent: { success: false, message },
         };
       }
 
       const { proc, remotePath } = session;
       recordingSessions.delete(s);
-      
+
       proc.kill("SIGINT");
-      
+
       await Promise.race([
         new Promise<void>((resolve) => proc.once("close", () => resolve())),
         new Promise<void>((resolve) => setTimeout(resolve, 2000)),
@@ -176,13 +204,10 @@ export function registerVisionTools(server: McpServer) {
         const targetPath = localPath || `./recording-${s}.mp4`;
         try {
           await execAdb(["-s", s, "pull", remotePath, targetPath]);
+          const message = `Recording stopped and saved to ${targetPath}`;
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Recording stopped and saved to ${targetPath}`,
-              },
-            ],
+            content: [{ type: "text" as const, text: message }],
+            structuredContent: { success: true, message, localPath: targetPath },
           };
         } catch (error) {
           const err = error as Error;
@@ -193,17 +218,15 @@ export function registerVisionTools(server: McpServer) {
                 text: `Failed to pull recording from ${remotePath} to ${targetPath}: ${err.message}`,
               },
             ],
+            isError: true as const,
           };
         }
       }
 
+      const message = `Recording stopped. File saved on device at ${remotePath}`;
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Recording stopped. File saved on device at ${remotePath}`,
-          },
-        ],
+        content: [{ type: "text" as const, text: message }],
+        structuredContent: { success: true, message },
       };
     }
   );

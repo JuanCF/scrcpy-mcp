@@ -13,6 +13,16 @@ export function registerShellTools(server: McpServer): void {
         command: z.string().describe("Shell command to execute on the device"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        output: z.string().describe("Combined stdout/stderr text from the command"),
+      },
+      annotations: {
+        title: "ADB Shell Command",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async ({ command, serial }) => {
       try {
@@ -20,6 +30,7 @@ export function registerShellTools(server: McpServer): void {
         const output = await execAdbShell(s, command)
         return {
           content: [{ type: "text", text: output }],
+          structuredContent: { output },
         }
       } catch (error) {
         const err = error as Error
@@ -28,6 +39,7 @@ export function registerShellTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }

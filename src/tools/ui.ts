@@ -67,6 +67,14 @@ export function registerUiTools(server: McpServer): void {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        xml: z.string().describe("The UI hierarchy as a uiautomator XML document"),
+      },
+      annotations: {
+        title: "Dump UI Hierarchy",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ serial }) => {
       try {
@@ -74,6 +82,7 @@ export function registerUiTools(server: McpServer): void {
         const xml = await dumpUiXml(s)
         return {
           content: [{ type: "text", text: xml }],
+          structuredContent: { xml },
         }
       } catch (error) {
         const err = error as Error
@@ -82,6 +91,7 @@ export function registerUiTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }
@@ -98,6 +108,26 @@ export function registerUiTools(server: McpServer): void {
         contentDesc: z.string().optional().describe("Content description to search for (partial match, case-insensitive)"),
         serial: z.string().optional().describe("Device serial number"),
       },
+      outputSchema: {
+        count: z.number().int().describe("Number of matching elements"),
+        elements: z.array(
+          z.object({
+            text: z.string().describe("Visible text of the element"),
+            resourceId: z.string().describe("Resource ID of the element"),
+            className: z.string().describe("Widget class name"),
+            contentDesc: z.string().describe("Content description (accessibility label)"),
+            bounds: z.string().describe("Raw bounds string [x1,y1][x2,y2]"),
+            tapX: z.number().int().describe("X coordinate of the element center"),
+            tapY: z.number().int().describe("Y coordinate of the element center"),
+            clickable: z.boolean().describe("Whether the element is clickable"),
+          })
+        ).describe("Matching UI elements with tap coordinates"),
+      },
+      annotations: {
+        title: "Find UI Element",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ text, resourceId, className, contentDesc, serial }) => {
       try {
@@ -107,6 +137,7 @@ export function registerUiTools(server: McpServer): void {
               type: "text",
               text: JSON.stringify({ error: true, message: "At least one search criterion must be provided" }),
             }],
+            isError: true as const,
           }
         }
 
@@ -129,11 +160,10 @@ export function registerUiTools(server: McpServer): void {
           results = results.filter((el) => el.contentDesc.toLowerCase().includes(lower))
         }
 
+        const structured = { count: results.length, elements: results }
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ count: results.length, elements: results }),
-          }],
+          content: [{ type: "text", text: JSON.stringify(structured) }],
+          structuredContent: structured,
         }
       } catch (error) {
         const err = error as Error
@@ -142,6 +172,7 @@ export function registerUiTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({ error: true, message: err.message }),
           }],
+          isError: true as const,
         }
       }
     }
