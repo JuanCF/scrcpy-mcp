@@ -37,8 +37,7 @@ export function registerVideoTools(server: McpServer): void {
         if (!session || !hasActiveSession(s)) {
           session = await startSession(s)
         }
-        const resolvedPort = port
-        const url = await startMjpegServer(s, resolvedPort)
+        const url = await startMjpegServer(s, port)
 
         const viewerLaunched = await startStreamViewer(s, url)
 

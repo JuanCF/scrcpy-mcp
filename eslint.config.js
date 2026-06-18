@@ -8,6 +8,23 @@ export default tseslint.config(
     ignores: ["dist/**", "node_modules/**"],
   },
   {
+    // Node build/codegen scripts run on Node, so expose its globals to avoid
+    // spurious no-undef errors (setTimeout, Buffer, console, URL, ...).
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        Buffer: "readonly",
+        URL: "readonly",
+        setTimeout: "readonly",
+        setInterval: "readonly",
+        clearTimeout: "readonly",
+        clearInterval: "readonly",
+      },
+    },
+  },
+  {
     files: ["src/**/*.ts"],
     languageOptions: {
       parserOptions: {

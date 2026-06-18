@@ -186,35 +186,35 @@
   "user_config": {
     "ADB_PATH": {
       "type": "string",
-      "title": "Path TO ADB BINARY",
+      "title": "Path to ADB Binary",
       "description": "Path to ADB binary (optional, default: adb)",
       "required": false,
       "sensitive": false
     },
     "ANDROID_SERIAL": {
       "type": "string",
-      "title": "ANDROID SERIAL NUMBER",
+      "title": "Android Serial Number",
       "description": "Device serial number (optional, for multiple devices)",
       "required": false,
       "sensitive": false
     },
     "SCRCPY_SERVER_PATH": {
       "type": "string",
-      "title": "SCRCPY BINARY PATH",
+      "title": "Scrcpy Binary Path",
       "description": "Path to scrcpy-server binary (optional)",
       "required": false,
       "sensitive": false
     },
     "SCRCPY_SERVER_VERSION": {
       "type": "string",
-      "title": "SCRCPY VERSION NUMBER",
+      "title": "Scrcpy Version Number",
       "description": "Version of scrcpy-server (optional)",
       "required": false,
       "sensitive": false
     },
     "FFMPEG_PATH": {
       "type": "string",
-      "title": "PATH TO FFMPEG BINARY",
+      "title": "Path to FFmpeg Binary",
       "description": "Path to ffmpeg binary (optional, default: ffmpeg)",
       "required": false,
       "sensitive": false
