@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.2",
   "name": "scrcpy-mcp",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "MCP server for Android device control via ADB and scrcpy — gives AI agents vision and control over Android devices",
   "homepage": "https://github.com/JuanCF/scrcpy-mcp",
   "icon": "icon.png",
