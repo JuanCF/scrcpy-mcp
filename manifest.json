@@ -218,6 +218,13 @@
       "description": "Path to ffmpeg binary (optional, default: ffmpeg)",
       "required": false,
       "sensitive": false
+    },
+    "FFPLAY_PATH": {
+      "type": "string",
+      "title": "Path to FFplay Binary",
+      "description": "Path to ffplay binary (optional, default: ffplay)",
+      "required": false,
+      "sensitive": false
     }
   },
   "keywords": [
