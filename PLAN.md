@@ -10,7 +10,7 @@
 2. [Architecture](#2-architecture)
 3. [Technology Stack & Dependencies](#3-technology-stack--dependencies)
 4. [Project Structure](#4-project-structure)
-5. [Tool Inventory (~34 tools)](#5-tool-inventory-34-tools)
+5. [Tool Inventory (~36 tools)](#5-tool-inventory-36-tools)
 6. [Resources (MCP Resources)](#6-resources-mcp-resources)
 7. [Implementation Details](#7-implementation-details)
    - 7.1 [Entry Point](#71-entry-point--srcindexts)
@@ -284,6 +284,7 @@ scrcpy-mcp/
 │   │   ├── session.ts           # start_session, stop_session — manage scrcpy connection lifecycle
 │   │   ├── device.ts            # device_list, device_info, screen_on/off, rotate, expand/collapse panels
 │   │   ├── vision.ts            # screenshot, screen_record_start, screen_record_stop
+│   │   ├── video.ts             # start_video_stream, stop_video_stream — MJPEG streaming and ffplay viewer
 │   │   ├── input.ts             # tap, swipe, long_press, drag_drop, input_text, key_event
 │   │   ├── apps.ts              # app_start, app_stop, app_install, app_uninstall, app_list, app_current
 │   │   ├── ui.ts                # ui_dump, ui_find_element
@@ -292,7 +293,9 @@ scrcpy-mcp/
 │   │   └── clipboard.ts         # clipboard_get, clipboard_set
 │   └── utils/
 │       ├── adb.ts               # ADB command execution helpers, device resolution, output parsing
-│       └── scrcpy.ts            # scrcpy-server lifecycle, control socket, video stream, clipboard sync
+│       ├── scrcpy.ts            # scrcpy-server lifecycle, control socket, video stream, clipboard sync
+│       ├── mjpeg.ts             # HTTP MJPEG server and ffplay viewer launcher
+│       └── constants.ts         # Shared constants (protocol types, env vars, keycodes)
 ├── package.json                 # Project metadata, scripts, dependencies, npm publish config
 ├── tsconfig.json                # TypeScript compiler configuration
 ├── tsup.config.ts               # Bundler configuration (for npm publish)
@@ -308,11 +311,14 @@ scrcpy-mcp/
 |------|-------------|----------------|
 | `src/index.ts` | ~60 | Import all tool modules, create `McpServer`, connect `StdioServerTransport` |
 | `src/utils/adb.ts` | ~150 | `execAdb()`, `resolveSerial()`, `getDeviceProperty()`, `getScreenSize()` |
-| `src/utils/scrcpy.ts` | ~400 | **Core module**: scrcpy-server push/launch, control socket (binary protocol for input injection), video stream management (ffmpeg decode to frame buffer), clipboard sync, session lifecycle |
+| `src/utils/scrcpy.ts` | ~550 | **Core module**: scrcpy-server push/launch, control socket (binary protocol for input injection), video stream management (ffmpeg decode to frame buffer), clipboard sync, session lifecycle |
+| `src/utils/mjpeg.ts` | ~120 | HTTP MJPEG server, ffplay viewer launcher with X11 visual resolution |
+| `src/utils/constants.ts` | ~80 | Control protocol type constants, keycode map, env var defaults |
 | `src/tools/session.ts` | ~80 | 2 tools: `start_session` / `stop_session` to manage scrcpy connection |
 | `src/tools/device.ts` | ~200 | 8 tools: device listing (ADB), screen on/off + rotate + panels (scrcpy native) |
-| `src/tools/vision.ts` | ~120 | 3 tools for screenshots and recording |
-| `src/tools/input.ts` | ~220 | 7 tools (including scroll) — scrcpy control socket / ADB fallback |
+| `src/tools/vision.ts` | ~150 | 3 tools for screenshots and recording |
+| `src/tools/video.ts` | ~80 | 2 tools: `start_video_stream` / `stop_video_stream` — MJPEG streaming + ffplay viewer |
+| `src/tools/input.ts` | ~280 | 7 tools (including scroll) — scrcpy control socket / ADB fallback, native-to-frame coordinate scaling |
 | `src/tools/apps.ts` | ~170 | 6 tools: app_start (scrcpy `START_APP`), rest via ADB |
 | `src/tools/ui.ts` | ~150 | 2 tools for UI hierarchy analysis (always ADB) |
 | `src/tools/shell.ts` | ~40 | 1 tool for arbitrary shell commands (always ADB) |
@@ -323,7 +329,7 @@ scrcpy-mcp/
 
 ---
 
-## 5. Tool Inventory (~34 tools)
+## 5. Tool Inventory (~36 tools)
 
 ### 5.1 Session Management (2 tools)
 
@@ -356,6 +362,13 @@ These tools manage the scrcpy connection to the device. When a session is active
 | `screenshot` | `serial?` | **Image** (base64 PNG) | **scrcpy** / ADB | Capture screen — reads from scrcpy frame buffer (~33ms) or falls back to `adb screencap` (~500ms) |
 | `screen_record_start` | `serial?`, `duration?`, `filename?` | Text | ADB | Start recording screen to device file |
 | `screen_record_stop` | `serial?` | Text | ADB | Stop recording (sends SIGINT to screenrecord process) |
+
+### 5.3b Video Streaming (2 tools)
+
+| Tool Name | Parameters | Returns | Via | Description |
+|-----------|-----------|---------|-----|-------------|
+| `start_video_stream` | `serial?`, `port?` | Text (JSON) | **scrcpy** / MJPEG | Start an HTTP MJPEG stream of the device screen and open an ffplay viewer window. Auto-starts a scrcpy session if needed. |
+| `stop_video_stream` | `serial?` | Text | MJPEG | Stop the MJPEG stream and close the ffplay viewer window |
 
 ### 5.4 Input Control (7 tools)
 
@@ -413,21 +426,22 @@ All input tools use **scrcpy's control protocol natively** when a session is act
 ### Tool count summary
 
 | Category | scrcpy native | ADB only | Total |
-|---|---|---|---|
+|---|---|---|---|---|
 | Session | — | — | 2 |
 | Device Management | 4 (screen on/off, rotate, panels) | 2 (list, info) | 8* |
 | Vision | 1 (screenshot via stream) | 2 (record start/stop) | 3 |
+| Video Streaming | 2 (MJPEG stream) | 0 | 2 |
 | Input | 7 (all via control socket) | 0 (ADB fallback only) | 7 |
 | App Management | 1 (start) | 5 (stop, install, uninstall, list, current) | 6 |
 | UI Automation | 0 | 2 | 2 |
 | Shell | 0 | 1 | 1 |
 | File Transfer | 0 | 3 | 3 |
 | Clipboard | 2 (get/set) | 0 (ADB fallback only) | 2 |
-| **Total** | **15** | **13** | **34** |
+| **Total** | **17** | **13** | **36** |
 
 *\* expand_notifications, expand_settings, collapse_panels have no ADB fallback — they require a scrcpy session.*
 
-**Total: 34 tools** (15 scrcpy-native, 13 ADB-only, 6 with ADB fallback)
+**Total: 36 tools** (17 scrcpy-native, 13 ADB-only, 6 with ADB fallback)
 
 ---
 
@@ -565,10 +579,11 @@ start_session():
        tunnel_forward=true control=true audio=false clipboard_autosync=true \
        max_size=1024 max_fps=30
   5. Connect to the forwarded TCP port from Node.js
-  6. Receive device metadata (device name, screen size)
-  7. Split connection into: video socket + control socket
-  8. Start ffmpeg process to decode H.264 video stream → frame buffer
-  9. Store session in a Map<serial, ScrcpySession>
+  6. Receive device metadata (device name, encoder frame size)
+  7. Query native display resolution via `wm size` (for coordinate system)
+  8. Split connection into: video socket + control socket
+  9. Start ffmpeg process to decode H.264 video stream → JPEG frame buffer
+  10. Store session in a Map<serial, ScrcpySession>
 
 stop_session():
   1. Close control socket
@@ -581,28 +596,17 @@ stop_session():
 #### ScrcpySession class
 
 ```typescript
-class ScrcpySession {
+interface ScrcpySession {
   serial: string;
-  controlSocket: net.Socket;     // TCP socket for sending control messages
-  videoProcess: ChildProcess;     // ffmpeg decoding H.264 → raw frames
-  frameBuffer: Buffer | null;     // Latest decoded frame (JPEG/PNG)
-  screenSize: { width: number; height: number };
-  
-  // Input injection via control socket (binary protocol)
-  async injectTouch(action: number, x: number, y: number, pressure?: number): Promise<void>;
-  async injectKeycode(action: number, keycode: number, repeat?: number, metaState?: number): Promise<void>;
-  async injectText(text: string): Promise<void>;
-  async injectScroll(x: number, y: number, dx: number, dy: number): Promise<void>;
-  
-  // Screen control
-  async setScreenPowerMode(mode: number): Promise<void>;
-  
-  // Clipboard
-  async setClipboard(text: string, paste?: boolean): Promise<void>;
-  async getClipboard(): Promise<string>; // via device message from scrcpy-server
-  
-  // Video
-  getLatestFrame(): Buffer | null;  // Returns latest JPEG from frame buffer
+  scid: number;                    // scrcpy session identifier
+  controlSocket: net.Socket;       // TCP socket for sending control messages
+  videoSocket: net.Socket | null;  // TCP socket receiving H.264 video
+  videoProcess: ChildProcess | null; // ffmpeg decoding H.264 → JPEG frames
+  frameBuffer: Buffer | null;      // Latest decoded JPEG frame (for screenshots)
+  screenSize: { width: number; height: number };  // NATIVE display resolution (from wm size)
+  frameSize: { width: number; height: number };   // Downscaled encoder frame size
+  clipboardContent: string | null; // Cached clipboard value from device
+  viewerProcess: ChildProcess | null; // ffplay MJPEG viewer window, if open
 }
 ```
 
@@ -845,6 +849,17 @@ server.registerTool("screenshot", {
 Screen recording uses `adb shell screenrecord` (ADB always — scrcpy's recording is tied to its GUI client). Since it runs as a persistent process:
 - `screen_record_start` spawns `adb shell screenrecord /sdcard/scrcpy-mcp-recording.mp4 --time-limit <duration>` in the background
 - `screen_record_stop` sends interrupt via `adb shell pkill -INT screenrecord`, waits, then optionally pulls the file to the host
+
+#### `start_video_stream` / `stop_video_stream` (`src/tools/video.ts`)
+
+Video streaming lets users watch the device screen in real-time while MCP controls it. The server serves an HTTP MJPEG stream from the scrcpy video frames and launches an ffplay window to display it.
+
+- `start_video_stream` — starts an HTTP MJPEG server on the host, begins streaming JPEG frames from the scrcpy frame buffer, and opens an ffplay viewer window. Auto-starts a scrcpy session if none is active.
+- `stop_video_stream` — stops the MJPEG server and kills the ffplay viewer process.
+
+The viewer consumes the MJPEG stream over HTTP directly (not raw H.264), avoiding timestamp issues and the single-encoder constraint — the same session's video frames serve screenshots, MJPEG clients, and the viewer window simultaneously.
+
+On some X11 servers (notably virtual/VM displays), SDL2 picks a broken GLX visual that prevents the ffplay window from appearing. The viewer resolves the display's default visual ID via `xdpyinfo` and sets `SDL_VIDEO_X11_VISUALID` to work around this.
 
 ### 7.7 Input Tools — `src/tools/input.ts`
 
@@ -1449,7 +1464,7 @@ The implementation will proceed in phases, with each phase producing a working s
 | 21 | Implement remaining device tools (screen_on/off, wifi) | `src/tools/device.ts` |
 | 22 | Implement screen recording tools | `src/tools/vision.ts` |
 
-**Milestone: All 34 tools implemented.**
+**Milestone: All 36 tools implemented.**
 
 ### Phase 5: Polish & Publish
 
@@ -1512,7 +1527,7 @@ This would let users restrict what the AI can do.
 
 1. **scrcpy-first architecture** — uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots, with ADB as automatic fallback
 2. **npm publishable** — `npx scrcpy-mcp` just works, no cloning repos
-3. **Comprehensive tool set** — 34 tools (15 scrcpy-native, 13 ADB-only, 6 with dual path) covering session, vision, input, apps, UI, shell, files, clipboard, device panels
+3. **Comprehensive tool set** — 36 tools (17 scrcpy-native, 13 ADB-only, 6 with dual path) covering session, vision, video streaming, input, apps, UI, shell, files, clipboard, device panels
 4. **Image-returning screenshots** — the `screenshot` tool returns actual image content the AI can see (not just a file path)
 5. **Smart device selection** — auto-selects when one device is connected, clear errors otherwise
 6. **UI element finding** — `ui_find_element` returns tap coordinates, bridging the gap between "I see a button" and "tap at x,y"
@@ -1550,7 +1565,7 @@ This would let users restrict what the AI can do.
 
 ## Summary
 
-This plan produces a **34-tool MCP server** built on top of **scrcpy's binary control protocol** for near-instant input injection, screenshots, clipboard sync, panel control, app launching, and screen management — with automatic ADB fallback when scrcpy is not available. 15 of the 34 tools use scrcpy's native protocol, 13 use ADB for things scrcpy doesn't handle, and 6 have both paths. The implementation is split into 5 phases, with ADB-based functionality working after Phase 1, and the full scrcpy-first fast path after Phase 2. The package will be published to npm for easy `npx scrcpy-mcp` usage by the wider developer community.
+This plan produces a **36-tool MCP server** built on top of **scrcpy's binary control protocol** for near-instant input injection, screenshots, clipboard sync, panel control, app launching, and screen management — with automatic ADB fallback when scrcpy is not available. 17 of the 36 tools use scrcpy's native protocol, 13 use ADB for things scrcpy doesn't handle, and 6 have both paths. The implementation is split into 5 phases, with ADB-based functionality working after Phase 1, and the full scrcpy-first fast path after Phase 2. The package will be published to npm for easy `npx scrcpy-mcp` usage by the wider developer community.
 
 **Estimated implementation time:** 6-8 hours for all phases (scrcpy binary protocol adds complexity).
 **Estimated package size:** <50KB (bundled).

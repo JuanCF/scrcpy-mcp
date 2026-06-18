@@ -54,11 +54,21 @@ npx vitest run --testNamePattern "device"
 src/
 ├── index.ts           # Entry point, server setup, tool registration
 ├── utils/
-│   └── adb.ts         # ADB utility functions (exec, device detection, etc.)
+│   ├── adb.ts         # ADB utility functions (exec, device detection, etc.)
+│   ├── scrcpy.ts      # scrcpy session lifecycle, control protocol, video decode
+│   ├── mjpeg.ts       # HTTP MJPEG server and ffplay viewer launcher
+│   └── constants.ts   # Shared constants (protocol types, env vars, keycodes)
 └── tools/
-    ├── device.ts      # Device management tools
-    ├── input.ts       # Touch/keyboard input tools
-    └── vision.ts      # Screenshot and recording tools
+    ├── apps.ts        # App management (start, stop, install, uninstall, list, current)
+    ├── clipboard.ts   # Clipboard get/set (scrcpy + ADB fallback)
+    ├── device.ts      # Device management (list, info, screen, panels, rotation, WiFi)
+    ├── files.ts       # File push/pull/list
+    ├── input.ts       # Touch/keyboard/scroll input (scrcpy + ADB fallback)
+    ├── session.ts     # scrcpy session start/stop
+    ├── shell.ts       # Arbitrary ADB shell command execution
+    ├── ui.ts          # UI hierarchy dump and element finder
+    ├── video.ts       # MJPEG video stream start/stop
+    └── vision.ts      # Screenshot and recording
 ```
 
 ## Code Style Guidelines
@@ -135,12 +145,25 @@ server.registerTool(
       param: z.string().optional().describe("Parameter description"),
       required: z.number().describe("Required parameter"),
     },
+    outputSchema: {
+      result: z.string().describe("Description of the result field"),
+    },
+    annotations: {
+      title: "Human-Readable Tool Title",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
   },
   async ({ param, required }) => {
-    const result = await doWork(param, required);
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    const result = await doWork(param, required)
+    return {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+      structuredContent: result,
+    }
   }
-);
+)
 ```
 
 ### Zod Schema Patterns
@@ -160,6 +183,8 @@ server.registerTool(
 
 - `ADB_PATH`: Custom ADB binary path (default: "adb")
 - `ANDROID_SERIAL`: Default device serial
+- `FFMPEG_PATH`: Custom ffmpeg binary path (default: "ffmpeg")
+- `FFPLAY_PATH`: Custom ffplay binary path (default: "ffplay")
 
 ### Comments
 
@@ -175,6 +200,7 @@ server.registerTool(
 - `execAdbShell()`: Run `adb -s <serial> shell <command>`
 - `resolveSerial()`: Auto-detect device or validate provided serial
 - `getDevices()`: Parse `adb devices -l` output
+- `getScreenSize()`: Parse `wm size` to get native display resolution
 
 ### Tool Response Format
 
@@ -183,7 +209,9 @@ server.registerTool(
   content: [
     { type: "text", text: "..." } |
     { type: "image", data: base64, mimeType: "image/png" }
-  ]
+  ],
+  structuredContent?: { ... }  // mirror of the JSON text for programmatic consumers
+  isError?: true               // set for error responses
 }
 ```
 

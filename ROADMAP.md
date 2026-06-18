@@ -267,11 +267,11 @@ Features to consider after initial release based on user feedback.
 
 Enable watching the device screen in real-time while MCP controls it.
 
-- [x] 6.1.1 Implement `start_video_stream` tool - connect to scrcpy video socket
-- [x] 6.1.2 Pipe H.264 stream to ffmpeg for decoding
-- [x] 6.1.3 Option A: Launch ffplay window for local viewing
-- [x] 6.1.4 Option B: HTTP MJPEG server for browser-based viewer
-- [ ] 6.1.5 Allow simultaneous control + viewing (video socket is separate from control socket)
+- [x] 6.1.1 Implement `start_video_stream` tool - start HTTP MJPEG server from scrcpy video frames
+- [x] 6.1.2 Serve JPEG frames over HTTP multipart stream
+- [x] 6.1.3 Launch ffplay window consuming the MJPEG stream (avoids H.264 timestamp issues and single-encoder constraint)
+- [x] 6.1.4 Allow simultaneous control + viewing (same scrcpy video session serves screenshots, MJPEG, and viewer)
+- [ ] 6.1.5 Browser-based viewer (WebRTC or HTML5 MJPEG)
 
 **Use cases:**
 - Debug automation visually while it runs
@@ -279,9 +279,9 @@ Enable watching the device screen in real-time while MCP controls it.
 - Integration with existing scrcpy GUI (`scrcpy --serial <device>` alongside MCP)
 
 **Technical notes:**
-- Video socket sends raw H.264 (needs decoding unlike screenshots)
+- Viewer consumes MJPEG over HTTP (same stream as screenshots) — no separate H.264 pipe needed
 - Can run alongside existing control socket connection
-- Alternative: Users can run scrcpy GUI separately on same forwarded port
+- Limitation: only one scrcpy H.264 encoder session per device — launching a second scrcpy client would evict the MCP session
 
 ---
 
@@ -297,4 +297,4 @@ Enable watching the device screen in real-time while MCP controls it.
 
 **Total steps:** 80+ individual tasks
 **Estimated time:** 6-8 hours of focused work
-**Final deliverable:** 34-tool MCP server published to npm
+**Final deliverable:** 36-tool MCP server published to npm

@@ -6,7 +6,7 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 
 ## Features
 
-- **34 tools** covering screenshots, input, apps, UI automation, shell, files, and clipboard
+- **36 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, and video streaming
 - **scrcpy-first**: uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots (~33ms)
 - **ADB fallback**: every tool works without scrcpy — slower but always available
 - **Image-returning screenshots**: the AI actually sees the screen, not just a file path
@@ -157,6 +157,13 @@ If you need to configure custom options (such as pointing to a non-standard `scr
 | `start_session` | Start a scrcpy session. When active, input and screenshots use the fast path (10-50x faster). |
 | `stop_session` | Stop the scrcpy session. Tools fall back to ADB. |
 
+### Video Streaming
+
+| Tool | Description |
+|------|-------------|
+| `start_video_stream` | Start an HTTP MJPEG video stream and open an ffplay viewer window. Auto-starts a scrcpy session if needed. |
+| `stop_video_stream` | Stop the video stream and close the viewer window. |
+
 ### Device Management
 
 | Tool | Description |
@@ -250,6 +257,7 @@ start_session → take screenshots → tap → swipe → ...
 | `SCRCPY_SERVER_PATH` | (auto) | Path to the scrcpy-server binary |
 | `SCRCPY_SERVER_VERSION` | (auto) | Version of the scrcpy-server binary |
 | `FFMPEG_PATH` | `ffmpeg` | Path to the ffmpeg binary |
+| `FFPLAY_PATH` | `ffplay` | Path to the ffplay binary (for the video stream viewer) |
 
 When only one device is connected, tools auto-detect it. With multiple devices, pass the `serial` parameter explicitly or set `ANDROID_SERIAL`.
 

@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit AI code review configuration for scrcpy-mcp
+# See: https://docs.coderabbit.ai/guides/configure-coderabbit
+
+language: en-US
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  commit_status: true
+  changed_files_summary: true
+  suggested_labels: false
+
+  path_filters:
+    - "!dist/**"
+    - "!node_modules/**"
+    - "!package-lock.json"
+    - "!icon.png"
+    - "!manifest.json"
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    base_branches:
+      - main
+
+  tools:
+    eslint:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+  path_instructions:
+    - path: "src/**/*.ts"
+      instructions: |
+        Review TypeScript source with these project conventions in mind:
+        - ESM imports with `.js` extension for local modules
+        - No semicolons; 2-space indentation; max ~100 chars per line
+        - camelCase for functions/variables, PascalCase for types, snake_case for tool names
+        - Prefer `async/await`, early returns, and minimal changes
+        - MCP tool registrations must include `inputSchema`, `outputSchema`, `annotations`, and `structuredContent`
+        - Keep `console.error()` for server-side logging only; never write plain text to stdout
+        - Preserve ADB fallback paths alongside the scrcpy fast path
+    - path: "tests/**/*.ts"
+      instructions: |
+        Ensure tests cover both scrcpy and ADB fallback paths where applicable and that assertions match the structured response format (`success`, `message`, `structuredContent`, etc.).
+    - path: "*.md"
+      instructions: |
+        Verify docs stay in sync with the source (e.g., tool counts, project structure, environment variables, and response schemas).
+
+  pre_merge_checks:
+    title:
+      mode: warning
+      requirements: "Use conventional commit format: type: short summary (max 72 chars)."
+
+chat:
+  auto_reply: true
