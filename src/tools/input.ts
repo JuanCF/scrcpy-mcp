@@ -101,14 +101,34 @@ function sendTouchEvent(
   sendControlMessage(serial, msg)
 }
 
-async function tapViaScrcpy(serial: string, x: number, y: number): Promise<void> {
+// Callers pass NATIVE display coordinates (matching ui_dump / ui_find_element
+// and `input tap`). The scrcpy touch protocol, however, requires the message's
+// screenSize to exactly equal the downscaled video frame size, or the server
+// silently drops the event. So scale native coords into frame space. max_size
+// preserves aspect ratio, so the x and y factors are equal.
+function nativeToFrame(
+  serial: string,
+  x: number,
+  y: number
+): { x: number; y: number; width: number; height: number } {
   const session = getSession(serial)
   if (!session) throw new Error(`No session for ${serial}`)
-  const { width, height } = session.screenSize
+  const { width: nativeW, height: nativeH } = session.screenSize
+  const { width: frameW, height: frameH } = session.frameSize
+  return {
+    x: Math.round((x * frameW) / nativeW),
+    y: Math.round((y * frameH) / nativeH),
+    width: frameW,
+    height: frameH,
+  }
+}
 
-  sendTouchEvent(serial, ACTION_DOWN, x, y, width, height, 1.0)
+async function tapViaScrcpy(serial: string, x: number, y: number): Promise<void> {
+  const { x: fx, y: fy, width, height } = nativeToFrame(serial, x, y)
+
+  sendTouchEvent(serial, ACTION_DOWN, fx, fy, width, height, 1.0)
   await sleep(10)
-  sendTouchEvent(serial, ACTION_UP, x, y, width, height, 0.0)
+  sendTouchEvent(serial, ACTION_UP, fx, fy, width, height, 0.0)
 }
 
 async function swipeViaScrcpy(
@@ -119,26 +139,26 @@ async function swipeViaScrcpy(
   y2: number,
   duration: number
 ): Promise<void> {
-  const session = getSession(serial)
-  if (!session) throw new Error(`No session for ${serial}`)
-  const { width, height } = session.screenSize
+  const start = nativeToFrame(serial, x1, y1)
+  const end = nativeToFrame(serial, x2, y2)
+  const { width, height } = start
 
   const steps = Math.max(2, Math.floor(duration / 16))
-  const dx = (x2 - x1) / steps
-  const dy = (y2 - y1) / steps
+  const dx = (end.x - start.x) / steps
+  const dy = (end.y - start.y) / steps
   const stepDelay = duration / steps
 
-  sendTouchEvent(serial, ACTION_DOWN, x1, y1, width, height, 1.0)
+  sendTouchEvent(serial, ACTION_DOWN, start.x, start.y, width, height, 1.0)
   await sleep(stepDelay)
 
   for (let i = 1; i < steps; i++) {
-    const x = Math.round(x1 + dx * i)
-    const y = Math.round(y1 + dy * i)
+    const x = Math.round(start.x + dx * i)
+    const y = Math.round(start.y + dy * i)
     sendTouchEvent(serial, ACTION_MOVE, x, y, width, height, 1.0)
     await sleep(stepDelay)
   }
 
-  sendTouchEvent(serial, ACTION_UP, x2, y2, width, height, 0.0)
+  sendTouchEvent(serial, ACTION_UP, end.x, end.y, width, height, 0.0)
 }
 
 async function longPressViaScrcpy(
@@ -147,13 +167,11 @@ async function longPressViaScrcpy(
   y: number,
   duration: number
 ): Promise<void> {
-  const session = getSession(serial)
-  if (!session) throw new Error(`No session for ${serial}`)
-  const { width, height } = session.screenSize
+  const { x: fx, y: fy, width, height } = nativeToFrame(serial, x, y)
 
-  sendTouchEvent(serial, ACTION_DOWN, x, y, width, height, 1.0)
+  sendTouchEvent(serial, ACTION_DOWN, fx, fy, width, height, 1.0)
   await sleep(duration)
-  sendTouchEvent(serial, ACTION_UP, x, y, width, height, 0.0)
+  sendTouchEvent(serial, ACTION_UP, fx, fy, width, height, 0.0)
 }
 
 async function scrollViaScrcpy(
@@ -163,11 +181,9 @@ async function scrollViaScrcpy(
   dx: number,
   dy: number
 ): Promise<void> {
-  const session = getSession(serial)
-  if (!session) throw new Error(`No session for ${serial}`)
-  const { width, height } = session.screenSize
+  const { x: fx, y: fy, width, height } = nativeToFrame(serial, x, y)
 
-  sendControlMessage(serial, serializeInjectScrollEvent(x, y, width, height, dx * 16, dy * 16))
+  sendControlMessage(serial, serializeInjectScrollEvent(fx, fy, width, height, dx * 16, dy * 16))
 }
 
 async function keyEventViaScrcpy(serial: string, keycode: number): Promise<void> {

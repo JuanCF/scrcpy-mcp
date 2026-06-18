@@ -1,6 +1,34 @@
 import http from "http"
-import { spawn } from "child_process"
+import { spawn, execFile } from "child_process"
 import { getLatestFrame, getSession } from "./scrcpy.js"
+
+// On some X11 servers (notably virtual/VM displays), SDL2 picks a GLX-capable
+// visual for every window it creates regardless of renderer, and that visual
+// silently fails to map (the ffplay window never appears, stuck at the SDL
+// placeholder title/size). Forcing SDL to use the server's actual default
+// visual avoids that broken path. Resolved lazily once and cached; any
+// failure (non-Linux, no DISPLAY, xdpyinfo missing) just skips the override.
+let x11VisualIdPromise: Promise<string | null> | null = null
+
+function resolveX11VisualId(): Promise<string | null> {
+  if (!x11VisualIdPromise) {
+    x11VisualIdPromise = new Promise((resolve) => {
+      if (process.platform !== "linux" || !process.env.DISPLAY) {
+        resolve(null)
+        return
+      }
+      execFile("xdpyinfo", (err, stdout) => {
+        if (err) {
+          resolve(null)
+          return
+        }
+        const match = stdout.match(/default visual id:\s*(0x[0-9a-fA-F]+)/)
+        resolve(match ? String(parseInt(match[1], 16)) : null)
+      })
+    })
+  }
+  return x11VisualIdPromise
+}
 
 interface MjpegEntry {
   server: http.Server
@@ -78,9 +106,18 @@ export async function startMjpegServer(serial: string, port: number): Promise<st
   return `http://127.0.0.1:${port}`
 }
 
-export async function startMjpegViewer(
-  serial: string, width: number, height: number, port: number
-): Promise<boolean> {
+// Open a native viewer window by pointing ffplay at the MJPEG HTTP stream we
+// already serve for this session. We deliberately do NOT launch the real scrcpy
+// client here: this device allows only a single screen-capture/H.264 encoder
+// session at a time, so a second scrcpy server would evict the MCP's own session
+// and break input/screenshots. ffplay instead consumes the already-decoded JPEG
+// frames over HTTP, so there is exactly one encoder on the device and many
+// consumers (screenshots, MJPEG clients, this window). MJPEG also sidesteps the
+// timestamp-less raw-H.264 problems that made ffplay stall before: each part is
+// a complete JPEG, displayed the moment it arrives.
+const findFfplay = (): string => process.env.FFPLAY_PATH || "ffplay"
+
+export async function startStreamViewer(serial: string, url: string): Promise<boolean> {
   const session = getSession(serial)
   if (!session) return false
 
@@ -88,18 +125,29 @@ export async function startMjpegViewer(
     session.viewerProcess.kill()
   }
   session.viewerProcess = null
-  session.viewerStdin = null
+
+  // ffplay uses SDL, which can pick a broken default visual on virtual/VM X11
+  // displays; reuse the resolved visual id if we have one.
+  const visualId = await resolveX11VisualId()
 
   return new Promise<boolean>((resolve) => {
     let settled = false
 
-    const viewer = spawn("ffplay", [
-      "-x", String(width),
-      "-y", String(height),
+    const viewer = spawn(findFfplay(), [
       "-window_title", "scrcpy-mcp",
-      "-loglevel", "quiet",
-      `http://127.0.0.1:${port}`,
-    ], { stdio: ["ignore", "ignore", "ignore"] })
+      "-loglevel", "error",
+      "-f", "mpjpeg",        // MIME multipart-JPEG demuxer (multipart/x-mixed-replace)
+      "-fflags", "nobuffer", // low latency: don't buffer input
+      "-flags", "low_delay",
+      "-framedrop",          // drop late frames to stay current on a live stream
+      url,
+    ], {
+      stdio: ["ignore", "ignore", "ignore"],
+      env: {
+        ...process.env,
+        ...(visualId ? { SDL_VIDEO_X11_VISUALID: visualId } : {}),
+      },
+    })
 
     viewer.once("spawn", () => {
       session.viewerProcess = viewer
@@ -108,10 +156,9 @@ export async function startMjpegViewer(
     })
 
     viewer.on("error", (err) => {
-      console.error(`[mjpeg] ffplay error for ${serial}:`, err.message)
+      console.error(`[viewer] ffplay error for ${serial}:`, err.message)
       if (session.viewerProcess === viewer) {
         session.viewerProcess = null
-        session.viewerStdin = null
       }
       if (!settled) {
         settled = true
@@ -122,7 +169,6 @@ export async function startMjpegViewer(
     viewer.on("exit", () => {
       if (session.viewerProcess === viewer) {
         session.viewerProcess = null
-        session.viewerStdin = null
       }
     })
   })
@@ -145,7 +191,6 @@ export function stopMjpegServer(serial: string): boolean {
       session.viewerProcess.kill()
     }
     session.viewerProcess = null
-    session.viewerStdin = null
   }
 
   servers.delete(serial)

@@ -18,9 +18,9 @@ export function registerSessionTools(server: McpServer): void {
         status: z.string().describe("Session status (e.g. 'connected')"),
         serial: z.string().describe("Resolved device serial"),
         screenSize: z.object({
-          width: z.number().int().describe("scrcpy video frame width"),
-          height: z.number().int().describe("scrcpy video frame height"),
-        }).describe("scrcpy video frame size — use these coordinates for tap/swipe"),
+          width: z.number().int().describe("Native display width"),
+          height: z.number().int().describe("Native display height"),
+        }).describe("Native display resolution — tap/swipe use these native coordinates, matching ui_dump / ui_find_element bounds directly (no scaling)"),
         message: z.string().describe("Human-readable status message"),
       },
       annotations: {

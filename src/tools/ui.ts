@@ -53,7 +53,7 @@ async function dumpUiXml(serial: string): Promise<string> {
   const tmpPath = `/sdcard/.ui_dump_${Date.now()}_${Math.random().toString(36).slice(2)}.xml`
   const raw = await execAdbShell(
     serial,
-    `uiautomator dump ${tmpPath} 2>/dev/null; cat ${tmpPath}; rm -f ${tmpPath}`
+    `uiautomator dump --compressed ${tmpPath} 2>/dev/null; cat ${tmpPath}; rm -f ${tmpPath}`
   )
   // Strip the trailing status line uiautomator appends (e.g. "UI hierchary dumped to: ...")
   return raw.replace(/UI hier[^\n]*dumped to:[^\n]*/gi, "").trim()

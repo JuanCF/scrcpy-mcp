@@ -26,7 +26,11 @@ describe("Session Tools Integration", () => {
 
       expect(data.status).toBe("connected")
       expect(data.screenSize).toBeDefined()
-      expect(data.screenSize.width).toBeLessThanOrEqual(800)
+      // screenSize reports the NATIVE display resolution (the coordinate space
+      // tap/swipe use), not the downscaled max_size=800 video frame. So it is
+      // independent of maxSize and is typically larger than it.
+      expect(data.screenSize.width).toBeGreaterThan(0)
+      expect(data.screenSize.height).toBeGreaterThan(0)
     }, 30000)
 
     it("should take a screenshot via scrcpy session", async () => {
