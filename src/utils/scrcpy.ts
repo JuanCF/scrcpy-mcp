@@ -276,6 +276,11 @@ export interface ScrcpySession {
   // this; otherwise the server's PositionMapper silently discards the event.
   // Input helpers scale native coords into this space before sending.
   frameSize: { width: number; height: number }
+  // False when the scrcpy video stream could not be established (e.g. the
+  // device/emulator has no usable h264 encoder, so device metadata never
+  // arrived). The session is still usable for control (input/clipboard/etc.)
+  // via the control socket; screenshots fall back to `adb screencap`.
+  videoAvailable: boolean
   clipboardContent: string | null
   viewerProcess: ChildProcess | null  // the native scrcpy viewer window, if open
 }
@@ -321,6 +326,12 @@ function startVideoStream(
   const ffmpegPath = findFfmpeg()
   
   const ffmpeg = spawn(ffmpegPath, [
+    // Keep stderr to genuine errors only: drop the startup banner, the
+    // input/output/stream-mapping dump, warnings, and the repeating
+    // "frame= …" progress lines. Real decode/encode errors still surface.
+    "-hide_banner",
+    "-loglevel", "error",
+    "-nostats",
     "-probesize", "1024",
     "-flags", "low_delay",
     "-f", "h264",
@@ -904,48 +915,81 @@ export async function startSession(
       )
     }
 
+    // The native display resolution (from `wm size`) is the coordinate space
+    // callers work in (matching ui_dump / ui_find_element / `input tap`), and
+    // is independent of the video stream — read it up front so it is available
+    // even if the video stream never comes up.
+    let nativeSize: { width: number; height: number } | null = null
+    try {
+      nativeSize = await getScreenSize(s)
+    } catch (err) {
+      console.error(
+        `[scrcpy] Could not read native size for ${s} via wm size:`,
+        (err as Error).message
+      )
+    }
+
     // Now that both sockets are connected, the server will proceed
     // to send device metadata on the video socket. We must consume these
     // bytes off the socket regardless so the h264 stream isn't corrupted,
     // but the width/height here are the *downscaled encoder frame* size
     // (e.g. 576x1024 at max_size=1024), NOT the device's native resolution.
-    const { width, height, overflow } = await receiveDeviceMeta(socket, port)
+    //
+    // If metadata never arrives (e.g. the device/emulator has no usable h264
+    // encoder, as on CI's swiftshader emulator) we don't hard-fail the whole
+    // session: control still works over the control socket, and screenshots
+    // fall back to `adb screencap`. We degrade to a video-less session instead.
+    let videoAvailable = true
+    let frameSize: { width: number; height: number }
+    let overflow = Buffer.alloc(0)
+    try {
+      const meta = await receiveDeviceMeta(socket, port)
+      frameSize = { width: meta.width, height: meta.height }
+      overflow = meta.overflow
+    } catch (err) {
+      videoAvailable = false
+      // Without device metadata there is no encoder frame size; fall back to
+      // the native size so coordinates map 1:1 (input helpers won't downscale).
+      frameSize = nativeSize ?? { width: 0, height: 0 }
+      console.error(
+        `[scrcpy] Device metadata not received for ${s}; continuing without ` +
+          `video (screenshots will use adb screencap):`,
+        (err as Error).message
+      )
+      // The video socket is unusable for streaming now; stop reading from it.
+      socket.destroy()
+    }
+
+    // Fall back to the frame size for native coords only if `wm size` failed
+    // AND we have a real frame size; otherwise coordinates are 1:1 with frame.
+    if (!nativeSize) {
+      nativeSize = videoAvailable ? frameSize : { width: 0, height: 0 }
+    }
 
     // The scrcpy touch protocol requires the touch message's screenSize to
-    // EXACTLY equal the video frame size above; a mismatch makes the server's
+    // EXACTLY equal the video frame size; a mismatch makes the server's
     // PositionMapper silently drop the event. But callers (and ui_dump /
     // ui_find_element / `input tap`) work in NATIVE display coordinates. So we
     // expose the native size as `screenSize` (the coordinate space callers
     // use) and keep the frame size as `frameSize`; the input helpers scale
     // native coords into frame space before sending. max_size preserves aspect
     // ratio, so this is a single uniform scale on both axes.
-    let nativeSize: { width: number; height: number }
-    try {
-      nativeSize = await getScreenSize(s)
-    } catch (err) {
-      // Fall back to the frame size if `wm size` can't be parsed; coordinates
-      // would then effectively be 1:1 with the frame.
-      console.error(
-        `[scrcpy] Could not read native size for ${s}, falling back to frame ` +
-          `size ${width}x${height}:`,
-        (err as Error).message
-      )
-      nativeSize = { width, height }
-    }
     console.error(
-      `[scrcpy] Frame size ${width}x${height}, native size ` +
-        `${nativeSize.width}x${nativeSize.height}`
+      `[scrcpy] Frame size ${frameSize.width}x${frameSize.height}, native size ` +
+        `${nativeSize.width}x${nativeSize.height}` +
+        (videoAvailable ? "" : " (video unavailable)")
     )
 
     session = {
       serial: s,
       scid,
       controlSocket,
-      videoSocket: socket,
+      videoSocket: videoAvailable ? socket : null,
       videoProcess: null,
       frameBuffer: null,
       screenSize: nativeSize,
-      frameSize: { width, height },
+      frameSize,
+      videoAvailable,
       clipboardContent: null,
       viewerProcess: null,
     }
@@ -958,13 +1002,15 @@ export async function startSession(
     // onNewVirtualDisplay callback (which sets up the PositionMapper for
     // touch coordinate mapping). Without this, touch events sent before the
     // PositionMapper is initialized are silently discarded by the server.
-    try {
-      await startVideoStream(currentSession, socket, overflow)
-    } catch (err) {
-      // If the video stream fails to produce a frame, the session is still
-      // usable for non-vision tools (key events, text input, etc.)
-      const msg = `[scrcpy] Video stream failed for ${s}, session partially ready:`
-      console.error(msg, (err as Error).message)
+    if (videoAvailable) {
+      try {
+        await startVideoStream(currentSession, socket, overflow)
+      } catch (err) {
+        // If the video stream fails to produce a frame, the session is still
+        // usable for non-vision tools (key events, text input, etc.)
+        const msg = `[scrcpy] Video stream failed for ${s}, session partially ready:`
+        console.error(msg, (err as Error).message)
+      }
     }
 
     controlSocket.on("close", () => {

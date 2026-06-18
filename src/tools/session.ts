@@ -21,6 +21,7 @@ export function registerSessionTools(server: McpServer): void {
           width: z.number().int().describe("Native display width"),
           height: z.number().int().describe("Native display height"),
         }).describe("Native display resolution — tap/swipe use these native coordinates, matching ui_dump / ui_find_element bounds directly (no scaling)"),
+        videoAvailable: z.boolean().describe("Whether the scrcpy video stream is up. When false, the session still works for input/clipboard but screenshots fall back to adb screencap."),
         message: z.string().describe("Human-readable status message"),
       },
       annotations: {
@@ -39,7 +40,10 @@ export function registerSessionTools(server: McpServer): void {
           status: "connected",
           serial: s,
           screenSize: session.screenSize,
-          message: "scrcpy session active. Input and screenshots will use the fast path.",
+          videoAvailable: session.videoAvailable,
+          message: session.videoAvailable
+            ? "scrcpy session active. Input and screenshots will use the fast path."
+            : "scrcpy session active for input, but the video stream is unavailable on this device; screenshots will fall back to adb screencap.",
         }
         return {
           content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
