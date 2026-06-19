@@ -41,7 +41,9 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "pack:bundle": "rm -rf node_modules && npm ci --omit=dev --omit=optional && mcpb pack",
+    "pack:publish": "smithery mcp publish ./scrcpy-mcp.mcpb -n JuanCF/scrcpy-mcp"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

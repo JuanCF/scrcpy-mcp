@@ -1,0 +1,41 @@
+# Dev source (dist/ is what runs, not src/)
+src/
+tests/
+
+# Config/tooling files
+.claude/
+.github/
+.opencode/
+.coderabbit.yaml
+.npmrc
+.nvmrc
+eslint.config.js
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+vitest.integration.config.ts
+opencode.json
+.mcp.json
+smithery.yaml
+
+# Docs
+AGENTS.md
+CONTRIBUTING.md
+PLAN.md
+ROADMAP.md
+
+# Build artifacts
+*.mcpb
+package-lock.json
+
+# Heavy node_modules junk
+node_modules/**/*.md
+node_modules/**/*.ts
+node_modules/**/*.map
+node_modules/**/test/
+node_modules/**/tests/
+node_modules/**/__tests__/
+node_modules/**/docs/
+node_modules/**/examples/
+node_modules/ffmpeg-static/bin/
+node_modules/ffmpeg-static/*.exe
