@@ -124,3 +124,17 @@ export const DEVICE_META_SIZE = 76
 export const DEVICE_NAME_OFFSET = 0
 export const VIDEO_WIDTH_OFFSET = 68
 export const VIDEO_HEIGHT_OFFSET = 72
+
+/*
+ * scrcpy 4.0 replaced send_codec_meta with send_stream_meta. Its header adds
+ * a 4-byte session-meta flags field between the codec ID and the dimensions:
+ *   Device name: 64 bytes (offset 0..63)
+ *   Codec ID:    4 bytes u32be (offset 64..67)
+ *   Flags:       4 bytes u32be (offset 68..71)
+ *   Width:       4 bytes u32be (offset 72..75)
+ *   Height:      4 bytes u32be (offset 76..79)
+ * Total after dummy byte: 80 bytes
+ */
+export const V4_DEVICE_META_SIZE = 80
+export const V4_VIDEO_WIDTH_OFFSET = 72
+export const V4_VIDEO_HEIGHT_OFFSET = 76

@@ -148,6 +148,8 @@ If you need to configure custom options (such as pointing to a non-standard `scr
 
 *Note: On Windows, remember to double-escape backslashes (`\\`) in your configuration paths.*
 
+> **OpenCode users:** OpenCode uses `"environment"` instead of `"env"` for passing environment variables to MCP servers. Replace `"env"` with `"environment"` in the example above if you're configuring scrcpy-mcp in `opencode.json`.
+
 ## Tool Reference
 
 ### Session Management

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import { resolveSerial } from "../utils/adb.js"
-import { startSession, stopSession } from "../utils/scrcpy.js"
+import { startSession, stopSession, detectScrcpyVersionInfo } from "../utils/scrcpy.js"
 import { stopMjpegServer } from "../utils/mjpeg.js"
 
 export function registerSessionTools(server: McpServer): void {
@@ -106,6 +106,30 @@ export function registerSessionTools(server: McpServer): void {
           }],
           isError: true as const,
         }
+      }
+    }
+  )
+
+  server.registerTool(
+    "version",
+    {
+      description: "Report which scrcpy version is being used by the MCP server. The version is detected from the SCRCPY_SERVER_VERSION environment variable, the scrcpy --version binary, or a built-in default.",
+      inputSchema: {},
+      outputSchema: {
+        version: z.string().describe("Scrcpy version string (e.g. '4.0', '2.7')"),
+        source: z.string().describe("Where the version was resolved from: 'env' (SCRCPY_SERVER_VERSION env var), 'binary' (scrcpy --version), or 'default' (built-in constant)"),
+      },
+      annotations: {
+        title: "Scrcpy Version",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const { version, source } = detectScrcpyVersionInfo()
+      return {
+        content: [{ type: "text", text: `${version} (source: ${source})` }],
+        structuredContent: { version, source },
       }
     }
   )

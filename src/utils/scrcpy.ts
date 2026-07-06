@@ -34,6 +34,9 @@ import {
   DEVICE_NAME_OFFSET,
   VIDEO_WIDTH_OFFSET,
   VIDEO_HEIGHT_OFFSET,
+  V4_DEVICE_META_SIZE,
+  V4_VIDEO_WIDTH_OFFSET,
+  V4_VIDEO_HEIGHT_OFFSET,
 } from "./constants.js"
 
 export function serializeInjectKeycode(
@@ -311,7 +314,14 @@ const findFfmpeg = (): string => {
     // download was skipped/failed, so verify the file actually exists before
     // returning it. Otherwise spawn fails with ENOENT and the video socket
     // teardown cascades into killing the whole scrcpy session.
-    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) return ffmpegStatic
+    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
+      try {
+        fs.accessSync(ffmpegStatic, fs.constants.X_OK)
+        return ffmpegStatic
+      } catch {
+        // file exists but is not executable, fall back to system ffmpeg
+      }
+    }
   } catch {
     // ffmpeg-static not installed, fall back to system ffmpeg
   }
@@ -517,14 +527,28 @@ export function findScrcpyServer(): string | null {
   return null
 }
 
+// Memoized: the version cannot change mid-process, and the uncached form runs
+// a blocking execSync per call. Caching also guarantees every caller in a
+// session start sees the same version, so the server launch args and the
+// client's protocol expectations can never disagree.
+let cachedScrcpyVersion: DetectedVersion | null = null
+
+export interface DetectedVersion {
+  version: string
+  // Where the version was resolved from: the SCRCPY_SERVER_VERSION env var,
+  // the `scrcpy --version` binary, or the built-in default constant.
+  source: "env" | "binary" | "default"
+}
+
 /**
- * Detect the installed scrcpy version by running `scrcpy --version`.
- * Falls back to the SCRCPY_SERVER_VERSION constant if detection fails.
+ * Resolve the scrcpy version and where it came from, without memoization.
+ * Prefer detectScrcpyVersionInfo() at call sites; this uncached form exists
+ * so the resolution ladder can be unit-tested independently of the cache.
  */
-export function detectScrcpyVersion(): string {
+export function computeScrcpyVersionInfo(): DetectedVersion {
   const envVersion = process.env.SCRCPY_SERVER_VERSION
   if (envVersion) {
-    return envVersion
+    return { version: envVersion, source: "env" }
   }
 
   try {
@@ -536,13 +560,60 @@ export function detectScrcpyVersion(): string {
     // or: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>"
     const match = output.match(/scrcpy\s+(\d+\.\d+(?:\.\d+)?)/)
     if (match) {
-      return match[1]
+      return { version: match[1], source: "binary" }
     }
   } catch {
     // scrcpy CLI not available, fall through
   }
 
-  return SCRCPY_SERVER_VERSION
+  return { version: SCRCPY_SERVER_VERSION, source: "default" }
+}
+
+/**
+ * Detect the installed scrcpy version and its source. Memoized: the version
+ * cannot change mid-process, so every caller sees a single consistent result
+ * and the `source` can never disagree with the `version` it accompanies.
+ */
+export function detectScrcpyVersionInfo(): DetectedVersion {
+  if (!cachedScrcpyVersion) {
+    cachedScrcpyVersion = computeScrcpyVersionInfo()
+  }
+  return cachedScrcpyVersion
+}
+
+/**
+ * Detect the installed scrcpy version string. Falls back to the
+ * SCRCPY_SERVER_VERSION constant if detection fails.
+ */
+export function detectScrcpyVersion(): string {
+  return detectScrcpyVersionInfo().version
+}
+
+interface ParsedVersion {
+  major: number
+  minor: number
+  patch: number
+}
+
+function parseVersion(version: string): ParsedVersion {
+  const parts = version.split(".").map(Number)
+  return {
+    major: parts[0] || 0,
+    minor: parts[1] || 0,
+    patch: parts[2] || 0,
+  }
+}
+
+function isVersionAtLeast(
+  version: string,
+  minMajor: number,
+  minMinor: number,
+  minPatch: number
+): boolean {
+  const v = parseVersion(version)
+  if (v.major !== minMajor) return v.major > minMajor
+  if (v.minor !== minMinor) return v.minor > minMinor
+  return v.patch >= minPatch
 }
 
 function generateScid(): number {
@@ -580,21 +651,27 @@ export async function removePortForwarding(serial: string, port: number): Promis
   }
 }
 
-export async function startScrcpyServer(
+// scrcpy 4.0 renamed send_codec_meta to send_stream_meta (whose header gains a
+// 4-byte flags field, see V4_DEVICE_META_SIZE). All other send_* options kept
+// their names and defaults, and the server ignores unknown options with a
+// warning, so the arg lists differ only in that one flag. Exported for tests.
+export function buildServerArgs(
   serial: string,
   scid: number,
+  version: string,
   options: ScrcpySessionOptions = {}
-): Promise<void> {
+): string[] {
   const {
     maxSize = 1024,
     maxFps = 30,
     videoBitRate = 8000000,
   } = options
 
-  const version = detectScrcpyVersion()
-  console.error(`[scrcpy] Using scrcpy server version: ${version}`)
+  const streamMetaArg = isVersionAtLeast(version, 4, 0, 0)
+    ? "send_stream_meta=true"
+    : "send_codec_meta=true"
 
-  const serverArgs = [
+  return [
     "-s", serial, "shell",
     `CLASSPATH=${SCRCPY_SERVER_PATH_LOCAL}`,
     "app_process",
@@ -617,9 +694,19 @@ export async function startScrcpyServer(
     "send_device_meta=true",
     "send_frame_meta=false",
     "send_dummy_byte=true",
-    "send_codec_meta=true",
+    streamMetaArg,
     "video_codec=h264",
   ]
+}
+
+export async function startScrcpyServer(
+  serial: string,
+  scid: number,
+  options: ScrcpySessionOptions = {}
+): Promise<void> {
+  const version = detectScrcpyVersion()
+  console.error(`[scrcpy] Using scrcpy server version: ${version}`)
+  const serverArgs = buildServerArgs(serial, scid, version, options)
 
   return new Promise((resolve, reject) => {
     const child = spawn(ADB_PATH, serverArgs, {
@@ -725,9 +812,33 @@ interface DeviceMetaResult {
   overflow: Buffer
 }
 
+export interface VideoMetaLayout {
+  metaSize: number
+  widthOffset: number
+  heightOffset: number
+}
+
+// Byte layout of the video-socket metadata header for a given server version.
+// Exported for tests.
+export function videoMetaLayout(version: string): VideoMetaLayout {
+  if (isVersionAtLeast(version, 4, 0, 0)) {
+    return {
+      metaSize: V4_DEVICE_META_SIZE,
+      widthOffset: V4_VIDEO_WIDTH_OFFSET,
+      heightOffset: V4_VIDEO_HEIGHT_OFFSET,
+    }
+  }
+  return {
+    metaSize: DEVICE_META_SIZE,
+    widthOffset: VIDEO_WIDTH_OFFSET,
+    heightOffset: VIDEO_HEIGHT_OFFSET,
+  }
+}
+
 const receiveDeviceMeta = async (
   socket: net.Socket,
-  port: number
+  port: number,
+  layout: VideoMetaLayout
 ): Promise<DeviceMetaResult> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -741,7 +852,7 @@ const receiveDeviceMeta = async (
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk])
 
-      if (buffer.length >= DEVICE_META_SIZE) {
+      if (buffer.length >= layout.metaSize) {
         clearTimeout(timer)
         socket.off("data", onData)
         socket.off("error", onError)
@@ -752,13 +863,13 @@ const receiveDeviceMeta = async (
           .replace(/\0+$/, "")
         console.error(`[scrcpy] Device name: ${deviceName}`)
 
-        const width = buffer.readUInt32BE(VIDEO_WIDTH_OFFSET)
-        const height = buffer.readUInt32BE(VIDEO_HEIGHT_OFFSET)
+        const width = buffer.readUInt32BE(layout.widthOffset)
+        const height = buffer.readUInt32BE(layout.heightOffset)
         console.error(`[scrcpy] Screen size: ${width}x${height}`)
 
         // Any bytes beyond the metadata are the start of the h264 stream
-        const overflow = buffer.length > DEVICE_META_SIZE
-          ? Buffer.from(buffer.subarray(DEVICE_META_SIZE))
+        const overflow = buffer.length > layout.metaSize
+          ? Buffer.from(buffer.subarray(layout.metaSize))
           : Buffer.alloc(0)
 
         resolve({ width, height, overflow })
@@ -850,6 +961,8 @@ export async function startSession(
     throw err
   }
 
+  const version = detectScrcpyVersion()
+
   const connectTimeout = 10000
   const retryInterval = 100
   const deadline = Date.now() + connectTimeout
@@ -859,6 +972,8 @@ export async function startSession(
   // In forward tunnel mode, adb forward accepts TCP connections even when
   // the server hasn't created its LocalServerSocket yet. connectAndVerify
   // reads the dummy byte after TCP connect to confirm the server is live.
+  // (scrcpy 4.x still sends the dummy byte; only the codec-meta header
+  // layout differs, handled below via videoMetaLayout.)
   while (Date.now() < deadline) {
     try {
       socket = await connectAndVerify(port, 2000)
@@ -934,6 +1049,7 @@ export async function startSession(
     // bytes off the socket regardless so the h264 stream isn't corrupted,
     // but the width/height here are the *downscaled encoder frame* size
     // (e.g. 576x1024 at max_size=1024), NOT the device's native resolution.
+    // The header layout depends on the server version (see videoMetaLayout).
     //
     // If metadata never arrives (e.g. the device/emulator has no usable h264
     // encoder, as on CI's swiftshader emulator) we don't hard-fail the whole
@@ -941,9 +1057,9 @@ export async function startSession(
     // fall back to `adb screencap`. We degrade to a video-less session instead.
     let videoAvailable = true
     let frameSize: { width: number; height: number }
-    let overflow = Buffer.alloc(0)
+    let overflow: Buffer = Buffer.alloc(0)
     try {
-      const meta = await receiveDeviceMeta(socket, port)
+      const meta = await receiveDeviceMeta(socket, port, videoMetaLayout(version))
       frameSize = { width: meta.width, height: meta.height }
       overflow = meta.overflow
     } catch (err) {
