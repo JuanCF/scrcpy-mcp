@@ -117,7 +117,7 @@ export function registerSessionTools(server: McpServer): void {
       inputSchema: {},
       outputSchema: {
         version: z.string().describe("Scrcpy version string (e.g. '4.0', '2.7')"),
-        source: z.string().describe("Where the version was resolved from: 'env' (SCRCPY_SERVER_VERSION env var), 'binary' (scrcpy --version), or 'default' (built-in constant)"),
+        source: z.enum(["env", "binary", "default"]).describe("Where the version was resolved from: 'env' (SCRCPY_SERVER_VERSION env var), 'binary' (scrcpy --version), or 'default' (built-in constant)"),
       },
       annotations: {
         title: "Scrcpy Version",

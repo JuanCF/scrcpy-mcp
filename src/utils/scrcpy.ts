@@ -589,6 +589,14 @@ export function detectScrcpyVersion(): string {
   return detectScrcpyVersionInfo().version
 }
 
+/**
+ * Test-only: clear the memoized version so detectScrcpyVersionInfo() can be
+ * exercised fresh without depending on call order across test files.
+ */
+export function __resetScrcpyVersionCacheForTests(): void {
+  cachedScrcpyVersion = null
+}
+
 interface ParsedVersion {
   major: number
   minor: number

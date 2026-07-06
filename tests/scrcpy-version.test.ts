@@ -6,6 +6,7 @@ import {
   computeScrcpyVersionInfo,
   detectScrcpyVersionInfo,
   detectScrcpyVersion,
+  __resetScrcpyVersionCacheForTests,
 } from "../src/utils/scrcpy.js"
 import {
   DEVICE_META_SIZE,
@@ -155,9 +156,8 @@ describe("computeScrcpyVersionInfo", () => {
 })
 
 describe("detectScrcpyVersionInfo", () => {
-  // This is the only test in the file that populates the module-level cache,
-  // so it owns the first call and can assert memoization end to end.
   it("memoizes the first resolution and keeps version/source consistent", () => {
+    __resetScrcpyVersionCacheForTests()
     const originalEnv = process.env.SCRCPY_SERVER_VERSION
     delete process.env.SCRCPY_SERVER_VERSION
     execSyncMock.mockReset()
@@ -180,6 +180,7 @@ describe("detectScrcpyVersionInfo", () => {
       } else {
         process.env.SCRCPY_SERVER_VERSION = originalEnv
       }
+      __resetScrcpyVersionCacheForTests()
     }
   })
 })
