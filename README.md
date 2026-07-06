@@ -4,6 +4,8 @@ MCP server that gives AI agents full vision and control over Android devices via
 
 Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code Copilot, etc.) to your Android device. The AI can see the screen, tap, swipe, type, launch apps, inspect UI elements, transfer files, and run shell commands.
 
+[![MCP Badge](https://lobehub.com/badge/mcp/juancf-scrcpy-mcp)](https://lobehub.com/mcp/juancf-scrcpy-mcp)
+
 ## Features
 
 - **36 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, and video streaming
