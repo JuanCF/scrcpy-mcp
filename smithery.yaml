@@ -1,5 +1,5 @@
 name: scrcpy-mcp
-version: 0.3.0
+version: 0.4.0
 description: MCP server for Android device control via ADB and scrcpy — gives AI agents vision and control over Android devices
 startCommand:
   type: stdio
