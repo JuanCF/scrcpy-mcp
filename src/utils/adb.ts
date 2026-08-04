@@ -75,9 +75,21 @@ export async function execAdbShell(
   return stdout.trim();
 }
 
-export async function getDevices(): Promise<DeviceInfo[]> {
-  const { stdout } = await execAdb(["devices", "-l"]);
-  const lines = stdout.trim().split("\n").slice(1);
+/**
+ * Parse the output of `adb devices -l` into structured device info.
+ *
+ * Exported separately from getDevices() so the parsing can be tested against
+ * real-world output without spawning adb.
+ *
+ * Carriage returns are stripped first. On Windows, adb emits CRLF line endings
+ * and can also place a stray CR *inside* a device line. That matters because
+ * JavaScript's `.` does not match a carriage return (the dot excludes LF, CR,
+ * LS and PS), so `(.*)$` stops dead at the CR and the anchored `$` then fails.
+ * Device lines silently failed to match and the caller reported
+ * "No Android devices connected" despite a connected, authorized device.
+ */
+export function parseDeviceList(stdout: string): DeviceInfo[] {
+  const lines = stdout.replace(/\r/g, "").trim().split("\n").slice(1);
 
   const devices: DeviceInfo[] = [];
 
@@ -108,6 +120,11 @@ export async function getDevices(): Promise<DeviceInfo[]> {
   }
 
   return devices;
+}
+
+export async function getDevices(): Promise<DeviceInfo[]> {
+  const { stdout } = await execAdb(["devices", "-l"]);
+  return parseDeviceList(stdout);
 }
 
 export async function resolveSerial(serial?: string): Promise<string> {
