@@ -97,7 +97,7 @@ export function parseDeviceList(stdout: string): DeviceInfo[] {
     if (!line.trim()) continue;
 
     const match = line.match(
-      /^(\S+)\s+(\S+)\s+(.*)$/
+      /^(\S+)\s+(\S+)(?:\s+(.*))?$/
     );
 
     if (match) {

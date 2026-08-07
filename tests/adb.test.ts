@@ -5,7 +5,9 @@ describe("parseDeviceList", () => {
   it("parses Unix LF output", () => {
     const stdout =
       "List of devices attached\n" +
-      "emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1\n\n"
+      "emulator-5554          device " +
+      "product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 " +
+      "device:emu64xa transport_id:1\n\n"
 
     expect(parseDeviceList(stdout)).toEqual([
       {
@@ -25,7 +27,9 @@ describe("parseDeviceList", () => {
   it("parses Windows CRLF output, including a mid-line carriage return", () => {
     const stdout =
       "List of devices attached\r\n" +
-      "ABCD1234EFGH5678        device product:generic_device\r model:Test_Model device:generic transport_id:1\r\n\r\n"
+      "ABCD1234EFGH5678        device " +
+      "product:generic_device\r model:Test_Model device:generic " +
+      "transport_id:1\r\n\r\n"
 
     expect(parseDeviceList(stdout)).toEqual([
       {
@@ -47,7 +51,8 @@ describe("parseDeviceList", () => {
     const stdout =
       "List of devices attached\r\n" +
       "ABC123                 unauthorized transport_id:2\r\n" +
-      "DEF456                 offline product:x model:y device:z transport_id:3\r\n"
+      "DEF456                 offline product:x model:y device:z " +
+      "transport_id:3\r\n"
 
     const devices = parseDeviceList(stdout)
     expect(devices.map((d) => [d.serial, d.state])).toEqual([
@@ -59,9 +64,25 @@ describe("parseDeviceList", () => {
   it("parses multiple attached devices", () => {
     const stdout =
       "List of devices attached\r\n" +
-      "SERIAL1                device product:p1 model:m1 device:d1 transport_id:1\r\n" +
-      "SERIAL2                device product:p2 model:m2 device:d2 transport_id:2\r\n\r\n"
+      "SERIAL1                device product:p1 model:m1 device:d1 " +
+      "transport_id:1\r\n" +
+      "SERIAL2                device product:p2 model:m2 device:d2 " +
+      "transport_id:2\r\n\r\n"
 
     expect(parseDeviceList(stdout).map((d) => d.serial)).toEqual(["SERIAL1", "SERIAL2"])
+  })
+
+  it("parses a line with only serial and state, no trailing metadata", () => {
+    const stdout =
+      "List of devices attached\r\n" +
+      "ABC123                 unauthorized\r\n\r\n"
+
+    const devices = parseDeviceList(stdout)
+    expect(devices).toEqual([
+      {
+        serial: "ABC123",
+        state: "unauthorized",
+      },
+    ])
   })
 })
