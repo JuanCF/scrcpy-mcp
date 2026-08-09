@@ -2,11 +2,21 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest"
 import { connectClient, disconnectClient, callTool, parseResult } from "./mcp-client.js"
 
 describe("Session Tools Integration", () => {
+  // Set while the display is toggled away from its original orientation.
+  let isRotated = false
+
   beforeAll(async () => {
     await connectClient()
   }, 30000)
 
   afterAll(async () => {
+    if (isRotated) {
+      try {
+        await callTool("rotate_device")
+      } catch {
+        // Best effort — leave the device upright if we can
+      }
+    }
     try {
       await callTool("stop_session")
     } catch {
@@ -48,6 +58,38 @@ describe("Session Tools Integration", () => {
       const imageContent = result.content.find((c) => c.type === "image")
       expect(imageContent).toBeDefined()
     }, 15000)
+
+    it("should rotate the device", async () => {
+      // rotate_device toggles, so a second call restores the original
+      // orientation. Without it the rest of the suite — and the user's phone
+      // once the run ends — is left sideways. The flag keeps that true even if
+      // the assertion below throws, since afterAll then does the undo.
+      await callTool("rotate_device").then((result) => {
+        isRotated = true
+        expect(String(parseResult(result))).toContain("rotated")
+      })
+
+      await callTool("rotate_device")
+      isRotated = false
+    })
+
+    it("should expand the notification panel", async () => {
+      const result = await callTool("expand_notifications")
+      const text = String(parseResult(result))
+      expect(text).toContain("Notification panel expanded")
+    })
+
+    it("should expand the quick settings panel", async () => {
+      const result = await callTool("expand_settings")
+      const text = String(parseResult(result))
+      expect(text).toContain("Quick settings panel expanded")
+    })
+
+    it("should collapse panels", async () => {
+      const result = await callTool("collapse_panels")
+      const text = String(parseResult(result))
+      expect(text).toContain("Panels collapsed")
+    })
 
     it("should stop the session", async () => {
       const result = await callTool("stop_session")

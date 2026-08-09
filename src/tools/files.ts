@@ -193,7 +193,12 @@ export function registerFileTools(server: McpServer): void {
       try {
         const s = await resolveSerial(serial)
         const safePath = devicePath.replace(/'/g, "'\\''")
-        const output = await execAdbShell(s, `ls -la '${safePath}'`)
+        // -H dereferences only the operand, so a symlinked directory such as
+        // /sdcard (-> /storage/self/primary) lists its target's contents rather
+        // than the link itself. Do NOT use -L: it dereferences every entry too,
+        // and a single dangling symlink makes ls print an error and exit 1,
+        // which execAdb turns into a rejection for the whole directory.
+        const output = await execAdbShell(s, `ls -laH '${safePath}'`)
         const entries = parseLsOutput(output)
         const structured = { path: devicePath, count: entries.length, entries }
         return {

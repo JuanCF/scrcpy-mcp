@@ -310,7 +310,7 @@ export function registerAppTools(server: McpServer): void {
         const output = await execAdbShell(s, "dumpsys activity activities")
         // Format: mResumedActivity: ActivityRecord{xxxx u0 com.pkg/.Activity t1}
         const match = output.match(
-          /mResumedActivity[=: ]+ActivityRecord\{[^}]+\s+([^\s/}]+)(\/[^\s}]+)?/
+          /m?ResumedActivity\s*[:=]\s*ActivityRecord\{[^}]+\s+u\d+\s+([^\s/}]+)(\/[^\s}]+)?/i
         )
         if (!match) {
           return toolError("Could not determine current activity")
