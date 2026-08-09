@@ -61,6 +61,27 @@ describe("parseDeviceList", () => {
     ])
   })
 
+  // Regression: "no permissions" is a multi-word adb device state.  The old
+  // regex captured only "no" as the state and left "permissions ..." in the
+  // info blob, so callers saw state "no" instead of "no permissions".
+  it("preserves the multi-word 'no permissions' state", () => {
+    const stdout =
+      "List of devices attached\r\n" +
+      "1234567890abcdef       no permissions usb:1 " +
+      "product:sample_product model:sample_model device:sample " +
+      "transport_id:1\r\n"
+
+    expect(parseDeviceList(stdout)).toEqual([
+      {
+        serial: "1234567890abcdef",
+        state: "no permissions",
+        model: "sample_model",
+        product: "sample_product",
+        transportId: "1",
+      },
+    ])
+  })
+
   it("parses multiple attached devices", () => {
     const stdout =
       "List of devices attached\r\n" +
