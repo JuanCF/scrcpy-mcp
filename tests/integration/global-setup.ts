@@ -9,15 +9,46 @@ const SUITE_SCREEN_OFF_TIMEOUT = "600000"
 
 let serial: string | null = null
 let previousScreenOffTimeout: string | null = null
+const cleanupFailures: { command: string; error: unknown }[] = []
 
-/** Run an adb shell command, swallowing failures so one broken step can't mask the rest. */
+/**
+ * Run an adb shell command, deferring failures so one broken step can't skip the
+ * ones after it. Every failure is still reported — see reportCleanupFailures().
+ */
 async function tryShell(command: string): Promise<void> {
   if (!serial) return
   try {
     await execAdbShell(serial, command)
-  } catch {
-    // best effort — teardown must keep going
+  } catch (error) {
+    cleanupFailures.push({ command, error })
   }
+}
+
+/**
+ * Fail the run if teardown could not put the device back. Silently swallowing
+ * these would let a green suite hand back a phone still pinned to the suite's
+ * settings — the next run then starts from a state nobody chose.
+ */
+function reportCleanupFailures(): void {
+  if (cleanupFailures.length === 0) return
+
+  const summary = cleanupFailures
+    .map(({ command, error }) => `  - ${command}: ${(error as Error).message}`)
+    .join("\n")
+
+  // Vitest prints a throw from globalSetup teardown as "error during close" but
+  // still exits 0, so the throw alone would leave CI green. Setting the exit code
+  // is what actually fails the run; the throw is what makes the cause readable.
+  process.exitCode = 1
+  throw new Error(
+    `Integration teardown could not restore the device (${cleanupFailures.length} command(s) failed); it may be left in a modified state:\n${summary}`,
+    {
+      cause:
+        cleanupFailures.length === 1
+          ? cleanupFailures[0].error
+          : new AggregateError(cleanupFailures.map(({ error }) => error)),
+    }
+  )
 }
 
 export async function setup(): Promise<void> {
@@ -62,4 +93,6 @@ export async function teardown(): Promise<void> {
   // accept the USB-debugging dialog before any further run works. Only the Wi-Fi
   // tests switch the transport, and they are opt-in via TEST_WIFI=1, so that
   // undo lives in wifi.test.ts where it is actually needed.
+
+  reportCleanupFailures()
 }

@@ -36,8 +36,15 @@ describe("App Tools Integration", () => {
   }, 30000)
 
   afterAll(async () => {
+    // Insurance for the app_start fast-path session: if its own afterAll threw,
+    // the device would stay busy and every later file's start_session would fail.
+    try {
+      await callTool("stop_session")
+    } catch {
+      // Ignore if no session
+    }
     await disconnectClient()
-  })
+  }, 30000)
 
   describe("app_list", () => {
     it("should list installed packages", async () => {
@@ -74,17 +81,63 @@ describe("App Tools Integration", () => {
     })
   })
 
+  // app_start has two execution paths: the scrcpy control-socket fast path when a
+  // session is live, and the ADB `monkey` fallback otherwise. Both report the same
+  // success message, so `source` is the only thing that tells them apart — hence a
+  // case per path, each asserting it.
   describe("app_start", () => {
-    it("should launch the Settings app", async () => {
+    it("should launch the Settings app via ADB when no session is active", async () => {
+      // This file's server process starts out sessionless, but say so explicitly:
+      // a leftover session would route this through the fast path instead and the
+      // fallback would go untested without the assertion below ever failing.
+      await callTool("stop_session").catch(() => {})
+
       const result = await callTool("app_start", { packageName: SETTINGS_PACKAGE })
       const parsed = parseResult(result) as {
         success: boolean
         message: string
+        source?: string
       }
 
       expect(parsed.success).toBe(true)
       expect(parsed.message).toContain(SETTINGS_PACKAGE)
+      expect(parsed.source).toBe("adb")
     }, 30000)
+
+    describe("with an active scrcpy session", () => {
+      let sessionStarted = false
+
+      beforeAll(async () => {
+        const result = await callTool("start_session", { maxSize: 800, maxFps: 15 })
+        const data = parseResult(result) as { status: string; message?: string }
+        // Surface the server-side message: without a connected session this
+        // describe would be testing the fallback path a second time.
+        expect(data.status, `start_session failed: ${data.message}`).toBe("connected")
+        sessionStarted = true
+      }, 30000)
+
+      afterAll(async () => {
+        // The device allows only one encoder session, so hand it back before the
+        // remaining files (session.test.ts included) try to open their own.
+        if (sessionStarted) await callTool("stop_session").catch(() => {})
+      }, 30000)
+
+      it("should launch the Settings app via scrcpy", async () => {
+        const result = await callTool("app_start", { packageName: SETTINGS_PACKAGE })
+        const parsed = parseResult(result) as {
+          success: boolean
+          message: string
+          source?: string
+        }
+
+        expect(parsed.success).toBe(true)
+        expect(parsed.message).toContain(SETTINGS_PACKAGE)
+        // "adb" here would mean startAppViaScrcpy threw and the handler quietly
+        // fell back: the launch still succeeds, so only `source` exposes that the
+        // fast path is broken.
+        expect(parsed.source).toBe("scrcpy")
+      }, 30000)
+    })
   })
 
   describe("app_current", () => {
