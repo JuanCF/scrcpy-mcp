@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import { connectClient, disconnectClient, callTool, parseResult } from "./mcp-client.js"
+import { connectClient, disconnectClient, callTool, parseResult, expectActionOk, stopSessionOrFail } from "./mcp-client.js"
 
 describe("Session Tools Integration", () => {
   // Set while the display is toggled away from its original orientation.
@@ -25,12 +25,13 @@ describe("Session Tools Integration", () => {
     } catch {
       // Best effort
     }
+    // Disconnect in a finally so a failed stop still tears the server down —
+    // otherwise the stdio child outlives the run and vitest hangs on it.
     try {
-      await callTool("stop_session")
-    } catch {
-      // Ignore if no session
+      await stopSessionOrFail()
+    } finally {
+      await disconnectClient()
     }
-    await disconnectClient()
   }, 30000)
 
   // Tests are order-dependent: start_session must run before screenshot, and stop_session must run last
@@ -74,7 +75,7 @@ describe("Session Tools Integration", () => {
       // the assertion below throws, since afterAll then does the undo.
       const result = await callTool("rotate_device")
       isRotated = true
-      expect(String(parseResult(result))).toContain("rotated")
+      expect(expectActionOk(result).message).toContain("rotated")
 
       await callTool("rotate_device")
       isRotated = false
@@ -82,20 +83,17 @@ describe("Session Tools Integration", () => {
 
     it("should expand the notification panel", async () => {
       const result = await callTool("expand_notifications")
-      const text = String(parseResult(result))
-      expect(text).toContain("Notification panel expanded")
+      expect(expectActionOk(result).message).toContain("Notification panel expanded")
     })
 
     it("should expand the quick settings panel", async () => {
       const result = await callTool("expand_settings")
-      const text = String(parseResult(result))
-      expect(text).toContain("Quick settings panel expanded")
+      expect(expectActionOk(result).message).toContain("Quick settings panel expanded")
     })
 
     it("should collapse panels", async () => {
       const result = await callTool("collapse_panels")
-      const text = String(parseResult(result))
-      expect(text).toContain("Panels collapsed")
+      expect(expectActionOk(result).message).toContain("Panels collapsed")
     })
 
     it("should stop the session", async () => {

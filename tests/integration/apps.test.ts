@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import { connectClient, disconnectClient, callTool, parseResult } from "./mcp-client.js"
+import { connectClient, disconnectClient, callTool, parseResult, stopSessionOrFail } from "./mcp-client.js"
 
 const SETTINGS_PACKAGE = "com.android.settings"
 
@@ -38,12 +38,13 @@ describe("App Tools Integration", () => {
   afterAll(async () => {
     // Insurance for the app_start fast-path session: if its own afterAll threw,
     // the device would stay busy and every later file's start_session would fail.
+    // Disconnect in a finally so a failed stop still tears the server down —
+    // otherwise the stdio child outlives the run and vitest hangs on it.
     try {
-      await callTool("stop_session")
-    } catch {
-      // Ignore if no session
+      await stopSessionOrFail()
+    } finally {
+      await disconnectClient()
     }
-    await disconnectClient()
   }, 30000)
 
   describe("app_list", () => {
@@ -90,7 +91,7 @@ describe("App Tools Integration", () => {
       // This file's server process starts out sessionless, but say so explicitly:
       // a leftover session would route this through the fast path instead and the
       // fallback would go untested without the assertion below ever failing.
-      await callTool("stop_session").catch(() => {})
+      await stopSessionOrFail()
 
       const result = await callTool("app_start", { packageName: SETTINGS_PACKAGE })
       const parsed = parseResult(result) as {
@@ -119,7 +120,7 @@ describe("App Tools Integration", () => {
       afterAll(async () => {
         // The device allows only one encoder session, so hand it back before the
         // remaining files (session.test.ts included) try to open their own.
-        if (sessionStarted) await callTool("stop_session").catch(() => {})
+        if (sessionStarted) await stopSessionOrFail()
       }, 30000)
 
       it("should launch the Settings app via scrcpy", async () => {

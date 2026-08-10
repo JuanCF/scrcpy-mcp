@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import { connectClient, disconnectClient, callTool, parseResult } from "./mcp-client.js"
+import { connectClient, disconnectClient, callTool, expectActionOk } from "./mcp-client.js"
 
 // Turning the screen off locks most devices, which would break every later
 // file. Do NOT rely on the filename to defer this: Vitest's BaseSequencer
@@ -29,8 +29,7 @@ describe("Screen Lock Tool Integration", () => {
   describe("screen_off", () => {
     it("should turn screen off", async () => {
       const result = await callTool("screen_off")
-      const text = String(parseResult(result))
-      expect(text).toContain("off")
+      expect(expectActionOk(result).message).toContain("off")
     })
   })
 })
