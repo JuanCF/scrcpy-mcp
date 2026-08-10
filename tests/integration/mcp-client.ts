@@ -13,12 +13,24 @@ export async function connectClient(): Promise<Client> {
     args: [process.cwd() + "/dist/index.js"],
   })
 
-  client = new Client(
+  const c = new Client(
     { name: "test-client", version: "1.0.0" },
     { capabilities: {} }
   )
 
-  await client.connect(transport)
+  await c.connect(transport)
+
+  // Not just a warm-up: the SDK only caches output-schema validators in
+  // cacheToolMetadata(), which runs off listTools(). Without this call
+  // Client.callTool() skips validation entirely, so every tool declaring an
+  // outputSchema could return no structuredContent — or content that violates
+  // its own schema — and the suite would never notice. With it, every callTool
+  // in the suite asserts schema conformance for free.
+  await c.listTools()
+
+  // Published only once fully ready, so a caller can never observe a client
+  // whose validators have not been cached yet.
+  client = c
   return client
 }
 

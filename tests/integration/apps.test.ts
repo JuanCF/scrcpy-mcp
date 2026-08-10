@@ -20,7 +20,7 @@ async function waitForForegroundApp(
   intervalMs = 500
 ): Promise<CurrentApp> {
   const deadline = Date.now() + timeoutMs
-  let last: CurrentApp = { packageName: "", activity: null }
+  let last: CurrentApp
 
   for (;;) {
     last = parseResult(await callTool("app_current")) as CurrentApp
@@ -156,12 +156,20 @@ describe("App Tools Integration", () => {
       }
       expect(installParsed.success).toBe(true)
 
-      const uninstallResult = await callTool("app_uninstall", { packageName: testApkPackage })
-      const uninstallParsed = parseResult(uninstallResult) as {
-        success: boolean
-        message: string
+      // Past this point the APK is on the device, so the uninstall has to happen
+      // even if the assertion below fails — otherwise a red run leaves the test
+      // app installed and the next run's install is no longer a clean one.
+      try {
+        const uninstallResult = await callTool("app_uninstall", { packageName: testApkPackage })
+        const uninstallParsed = parseResult(uninstallResult) as {
+          success: boolean
+          message: string
+        }
+        expect(uninstallParsed.success).toBe(true)
+      } finally {
+        // No-op when the uninstall above succeeded; the package is already gone.
+        await callTool("app_uninstall", { packageName: testApkPackage }).catch(() => {})
       }
-      expect(uninstallParsed.success).toBe(true)
     }, 60000)
   })
 })

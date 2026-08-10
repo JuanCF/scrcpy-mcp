@@ -12,8 +12,11 @@ describe("Screen Lock Tool Integration", () => {
   }, 30000)
 
   afterAll(async () => {
-    // KEYCODE_WAKEUP alone wakes the display but leaves the keyguard up, so
-    // dismiss it explicitly.
+    // screen_on alone wakes the display but leaves the keyguard up, so try to
+    // dismiss it too. On a device with a PIN/pattern/password this cannot
+    // succeed — `wm dismiss-keyguard` still exits 0 — and the device stays
+    // locked for the rest of the run. Every other file's beforeAll wakes the
+    // screen and its tools work behind the lock, so that is not fatal.
     try {
       await callTool("screen_on")
       await callTool("shell_exec", { command: "wm dismiss-keyguard" })

@@ -40,9 +40,20 @@ export async function teardown(): Promise<void> {
 
   if (previousScreenOffTimeout !== null) {
     await tryShell(`settings put system screen_off_timeout ${previousScreenOffTimeout}`)
+  } else {
+    // The key was unset before the run, so writing SUITE_SCREEN_OFF_TIMEOUT
+    // created it. Removing it is the actual restore — leaving it behind would
+    // pin the device at a 10-minute timeout forever.
+    await tryShell("settings delete system screen_off_timeout")
   }
 
-  // Leave the device awake and unlocked, whichever file happened to run last.
+  // Leave the display awake, whichever file happened to run last. The keyguard
+  // is only best-effort: `wm dismiss-keyguard` exits 0 either way, but it is a
+  // no-op against a *secure* keyguard (one with a PIN/pattern/password), which
+  // it cannot dismiss without the user's credential — and should not. So on a
+  // secured device the suite hands the phone back awake but locked. That is
+  // fine: the suite is verified to pass from a locked start, since every file's
+  // beforeAll wakes the screen and the tools it exercises work behind the lock.
   await tryShell("input keyevent KEYCODE_WAKEUP")
   await tryShell("wm dismiss-keyguard")
 

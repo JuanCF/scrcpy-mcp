@@ -17,6 +17,14 @@ describe("Session Tools Integration", () => {
         // Best effort — leave the device upright if we can
       }
     }
+    // The expand_notifications / expand_settings tests leave a panel open if the
+    // collapse_panels test never runs, so collapse unconditionally rather than
+    // relying on that test having executed.
+    try {
+      await callTool("collapse_panels")
+    } catch {
+      // Best effort
+    }
     try {
       await callTool("stop_session")
     } catch {
@@ -64,10 +72,9 @@ describe("Session Tools Integration", () => {
       // orientation. Without it the rest of the suite — and the user's phone
       // once the run ends — is left sideways. The flag keeps that true even if
       // the assertion below throws, since afterAll then does the undo.
-      await callTool("rotate_device").then((result) => {
-        isRotated = true
-        expect(String(parseResult(result))).toContain("rotated")
-      })
+      const result = await callTool("rotate_device")
+      isRotated = true
+      expect(String(parseResult(result))).toContain("rotated")
 
       await callTool("rotate_device")
       isRotated = false
