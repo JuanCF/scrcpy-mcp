@@ -2,6 +2,7 @@ import { spawn, execFileSync, ChildProcess } from "child_process"
 import { createRequire } from "module"
 import * as net from "net"
 import * as path from "path"
+import { StringDecoder } from "string_decoder"
 import * as fs from "fs"
 import { execAdb, execAdbShell, resolveSerial, getScreenSize } from "./adb.js"
 import {
@@ -833,7 +834,13 @@ export function startScrcpyServer(
     stdio: ["ignore", "ignore", "pipe"],
   })
 
-  let stderrBuffer = ""
+  // Retained as raw bytes so the cap is actually a byte cap and so a multi-byte
+  // character straddling two chunks survives: decoding is deferred to the getter,
+  // which sees the whole buffer at once.
+  let stderrBuffer = Buffer.alloc(0)
+  // Separate decoder for the live log lines, which are emitted per chunk and so
+  // would otherwise mangle a character split across a chunk boundary.
+  const stderrDecoder = new StringDecoder("utf8")
   let exitInfo: ServerExit | null = null
 
   child.once("exit", (code, signal) => {
@@ -842,12 +849,13 @@ export function startScrcpyServer(
 
   if (child.stderr) {
     child.stderr.on("data", (data: Buffer) => {
-      const text = data.toString()
-      stderrBuffer += text
+      stderrBuffer = Buffer.concat([stderrBuffer, data])
       if (stderrBuffer.length > MAX_SERVER_STDERR_BYTES) {
-        stderrBuffer = stderrBuffer.slice(-MAX_SERVER_STDERR_BYTES)
+        stderrBuffer = stderrBuffer.subarray(
+          stderrBuffer.length - MAX_SERVER_STDERR_BYTES
+        )
       }
-      const msg = text.trim()
+      const msg = stderrDecoder.write(data).trim()
       if (msg) {
         console.error(`[scrcpy-server] ${msg}`)
       }
@@ -866,7 +874,7 @@ export function startScrcpyServer(
       child.unref()
       resolve({
         process: child,
-        get stderr() { return stderrBuffer },
+        get stderr() { return stderrBuffer.toString("utf8") },
         get exit() { return exitInfo },
       })
     })
