@@ -1,4 +1,4 @@
-import { spawn, execSync, ChildProcess } from "child_process"
+import { spawn, execFileSync, ChildProcess } from "child_process"
 import { createRequire } from "module"
 import * as net from "net"
 import * as path from "path"
@@ -28,6 +28,8 @@ import {
   JPEG_SOI,
   JPEG_EOI,
   DEVICE_MSG_TYPE_CLIPBOARD,
+  DEVICE_MSG_TYPE_ACK_CLIPBOARD,
+  DEVICE_MSG_ACK_CLIPBOARD_SIZE,
   MAX_CLIPBOARD_BYTES,
   CLIPBOARD_COPY_KEY_NONE,
   DEVICE_META_SIZE,
@@ -502,10 +504,55 @@ function startVideoStream(
   return firstFramePromise
 }
 
+// Existence alone is not enough for either the scrcpy binary or the server: a
+// directory satisfies existsSync, and `adb push <dir>` then creates the remote
+// scrcpy-server.jar as a directory, which fails later with a confusing error.
+// Rejecting non-files here keeps that mistake local and legible.
+function isExistingFile(p: string): boolean {
+  try {
+    return fs.statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
+function findScrcpyBinaryOnPath(): string | null {
+  const command = process.platform === "win32" ? "where" : "which"
+  try {
+    const output = execFileSync(command, ["scrcpy"], {
+      encoding: "utf8",
+      timeout: 5000,
+    })
+    const lines = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    for (const line of lines) {
+      if (isExistingFile(line)) {
+        return line
+      }
+    }
+  } catch {
+    // scrcpy not on PATH or lookup failed
+  }
+  return null
+}
+
 export function findScrcpyServer(): string | null {
   const envPath = process.env.SCRCPY_SERVER_PATH
-  if (envPath && fs.existsSync(envPath)) {
+  if (envPath && isExistingFile(envPath)) {
     return envPath
+  }
+
+  // Try to discover the server next to the scrcpy executable on PATH. This
+  // matches how the official scrcpy client works and covers Windows zip
+  // installs where users add the scrcpy directory to PATH.
+  const scrcpyBinary = findScrcpyBinaryOnPath()
+  if (scrcpyBinary) {
+    const serverNextToBinary = path.join(path.dirname(scrcpyBinary), "scrcpy-server")
+    if (isExistingFile(serverNextToBinary)) {
+      return serverNextToBinary
+    }
   }
 
   const homeDir = process.env.HOME || process.env.USERPROFILE
@@ -519,7 +566,7 @@ export function findScrcpyServer(): string | null {
   }
 
   for (const p of commonPaths) {
-    if (fs.existsSync(p)) {
+    if (isExistingFile(p)) {
       return p
     }
   }
@@ -528,7 +575,7 @@ export function findScrcpyServer(): string | null {
 }
 
 // Memoized: the version cannot change mid-process, and the uncached form runs
-// a blocking execSync per call. Caching also guarantees every caller in a
+// a blocking execFileSync per call. Caching also guarantees every caller in a
 // session start sees the same version, so the server launch args and the
 // client's protocol expectations can never disagree.
 let cachedScrcpyVersion: DetectedVersion | null = null
@@ -552,7 +599,7 @@ export function computeScrcpyVersionInfo(): DetectedVersion {
   }
 
   try {
-    const output = execSync("scrcpy --version 2>/dev/null", {
+    const output = execFileSync("scrcpy", ["--version"], {
       timeout: 5000,
       encoding: "utf8",
     })
@@ -566,6 +613,12 @@ export function computeScrcpyVersionInfo(): DetectedVersion {
     // scrcpy CLI not available, fall through
   }
 
+  console.error(
+    `[scrcpy] Warning: could not detect scrcpy version from binary or ` +
+      `SCRCPY_SERVER_VERSION environment variable; falling back to default ` +
+      `${SCRCPY_SERVER_VERSION}. Set SCRCPY_SERVER_VERSION if the installed ` +
+      `server version differs.`
+  )
   return { version: SCRCPY_SERVER_VERSION, source: "default" }
 }
 
@@ -707,30 +760,101 @@ export function buildServerArgs(
   ]
 }
 
-export async function startScrcpyServer(
+// Cap on the retained server stderr tail. The adb child lives for the whole
+// session and the server runs at log_level=verbose, so an uncapped buffer would
+// grow without bound while only ever being read on connect failure. The errors
+// worth surfacing (e.g. a version mismatch) are the last thing written before
+// the server dies, so keeping the tail loses nothing.
+const MAX_SERVER_STDERR_BYTES = 8192
+
+export interface ServerExit {
+  code: number | null
+  signal: NodeJS.Signals | null
+}
+
+export interface ScrcpyServerProcess {
+  process: ChildProcess
+  // Stderr emitted by the server process since spawn, truncated to the last
+  // MAX_SERVER_STDERR_BYTES. Collected so it can be surfaced in
+  // connection-timeout errors when the server exits immediately (e.g. due to a
+  // version mismatch).
+  stderr: string
+  // Set once the adb child exits. The scrcpy server runs in the foreground of
+  // that adb shell, so an exit before the client connects means the server died
+  // (e.g. version mismatch) and no amount of retrying will reach it.
+  exit: ServerExit | null
+}
+
+/**
+ * Build the error for a session whose server never accepted a connection. Pure
+ * so the diagnostics that matter here — the server's own stderr, and whether it
+ * died rather than timed out — can be tested without standing up adb, port
+ * forwarding, and sockets.
+ */
+export function formatConnectFailure(
+  port: number,
+  timeoutMs: number,
+  server: Pick<ScrcpyServerProcess, "stderr" | "exit">
+): string {
+  const lines: string[] = []
+
+  if (server.exit) {
+    const how = server.exit.signal
+      ? `signal ${server.exit.signal}`
+      : `exit code ${server.exit.code}`
+    lines.push(
+      `The scrcpy server exited (${how}) before accepting a connection on port ${port}.`
+    )
+  } else {
+    lines.push(
+      `Failed to connect to scrcpy server on port ${port} within ${timeoutMs}ms`
+    )
+  }
+
+  const serverStderr = server.stderr.trim()
+  if (serverStderr) {
+    lines.push(`Server stderr:\n${serverStderr}`)
+  }
+
+  return lines.join("\n")
+}
+
+export function startScrcpyServer(
   serial: string,
   scid: number,
   options: ScrcpySessionOptions = {}
-): Promise<void> {
+): Promise<ScrcpyServerProcess> {
   const version = detectScrcpyVersion()
   console.error(`[scrcpy] Using scrcpy server version: ${version}`)
   const serverArgs = buildServerArgs(serial, scid, version, options)
 
-  return new Promise((resolve, reject) => {
-    const child = spawn(ADB_PATH, serverArgs, {
-      detached: true,
-      stdio: ["ignore", "ignore", "pipe"],
+  const child = spawn(ADB_PATH, serverArgs, {
+    detached: true,
+    stdio: ["ignore", "ignore", "pipe"],
+  })
+
+  let stderrBuffer = ""
+  let exitInfo: ServerExit | null = null
+
+  child.once("exit", (code, signal) => {
+    exitInfo = { code, signal }
+  })
+
+  if (child.stderr) {
+    child.stderr.on("data", (data: Buffer) => {
+      const text = data.toString()
+      stderrBuffer += text
+      if (stderrBuffer.length > MAX_SERVER_STDERR_BYTES) {
+        stderrBuffer = stderrBuffer.slice(-MAX_SERVER_STDERR_BYTES)
+      }
+      const msg = text.trim()
+      if (msg) {
+        console.error(`[scrcpy-server] ${msg}`)
+      }
     })
+  }
 
-    if (child.stderr) {
-      child.stderr.on("data", (data: Buffer) => {
-        const msg = data.toString().trim()
-        if (msg) {
-          console.error(`[scrcpy-server] ${msg}`)
-        }
-      })
-    }
-
+  return new Promise((resolve, reject) => {
     child.once("error", (err) => {
       reject(new Error(
         `Failed to start scrcpy server for ${serial}: ${err.message}`,
@@ -740,7 +864,11 @@ export async function startScrcpyServer(
 
     child.once("spawn", () => {
       child.unref()
-      resolve()
+      resolve({
+        process: child,
+        get stderr() { return stderrBuffer },
+        get exit() { return exitInfo },
+      })
     })
   })
 }
@@ -900,42 +1028,92 @@ const receiveDeviceMeta = async (
     socket.resume()
   })
 
+export interface DeviceMessageHandlers {
+  /** Called once per complete clipboard message, in arrival order. */
+  onClipboard: (text: string) => void
+  /** Called when the stream can no longer be framed; the buffer is dropped. */
+  onError: (message: string) => void
+}
+
+/**
+ * Parse whatever complete device messages `pending + chunk` contains, returning
+ * the bytes left over — the head of a message whose tail has not arrived yet.
+ *
+ * Framing is the entire job here: messages are not aligned to TCP reads, so one
+ * read can carry several messages, a fraction of one, or both. Each type is
+ * therefore consumed by its own exact length, and a type that is recognised but
+ * ignored still has to be measured, because the bytes after it are a real
+ * message.
+ *
+ * Pure apart from the handlers, so those rules can be tested by feeding buffers
+ * in rather than by driving a device.
+ */
+export function consumeDeviceMessages(
+  pending: Buffer,
+  chunk: Buffer,
+  handlers: DeviceMessageHandlers
+): Buffer {
+  let buffer = Buffer.concat([pending, chunk])
+
+  // One byte is enough to learn the type; each branch then waits for the rest of
+  // its own message.
+  while (buffer.length >= 1) {
+    const msgType = buffer.readUInt8(0)
+
+    if (msgType === DEVICE_MSG_TYPE_CLIPBOARD) {
+      if (buffer.length < 5) break
+
+      const textLength = buffer.readUInt32BE(1)
+
+      if (textLength > MAX_CLIPBOARD_BYTES) {
+        handlers.onError(
+          `Clipboard payload too large: ${textLength} bytes ` +
+            `(max ${MAX_CLIPBOARD_BYTES}), resetting buffer`
+        )
+        return Buffer.alloc(0)
+      }
+
+      if (buffer.length < 5 + textLength) break
+
+      handlers.onClipboard(buffer.toString("utf8", 5, 5 + textLength))
+      buffer = buffer.subarray(5 + textLength)
+    } else if (msgType === DEVICE_MSG_TYPE_ACK_CLIPBOARD) {
+      // The server acknowledges every SET_CLIPBOARD sent with a non-zero
+      // sequence. setClipboardViaScrcpy is fire-and-forget, so the sequence is
+      // of no use to us — but skipping the ack by its exact length is not
+      // optional. Treating it as unparseable used to drop the whole buffer,
+      // which discards any clipboard message that arrived in the same read.
+      if (buffer.length < DEVICE_MSG_ACK_CLIPBOARD_SIZE) break
+
+      buffer = buffer.subarray(DEVICE_MSG_ACK_CLIPBOARD_SIZE)
+    } else {
+      // Length is encoded per type, so an unrecognised type leaves nothing to
+      // say where the next message starts. Dropping the buffer is the only
+      // resync available.
+      handlers.onError(`Unknown device message type: ${msgType}, resetting buffer`)
+      return Buffer.alloc(0)
+    }
+  }
+
+  return buffer
+}
+
 const startDeviceMessageHandler = (session: ScrcpySession): void => {
   if (!session.controlSocket) return
 
-  let messageBuffer = Buffer.alloc(0)
+  // Annotated because Buffer.alloc infers the narrower Buffer<ArrayBuffer>,
+  // which the parser's return type does not satisfy.
+  let messageBuffer: Buffer = Buffer.alloc(0)
 
   session.controlSocket.on("data", (data: Buffer) => {
-    messageBuffer = Buffer.concat([messageBuffer, data])
-
-    while (messageBuffer.length >= 5) {
-      const msgType = messageBuffer.readUInt8(0)
-
-      if (msgType === DEVICE_MSG_TYPE_CLIPBOARD) {
-        const textLength = messageBuffer.readUInt32BE(1)
-
-        if (textLength > MAX_CLIPBOARD_BYTES) {
-          console.error(
-            `[scrcpy] [${session.serial}] Clipboard payload too large: ` +
-              `${textLength} bytes (max ${MAX_CLIPBOARD_BYTES}), resetting buffer`
-          )
-          messageBuffer = Buffer.alloc(0)
-          break
-        }
-
-        if (messageBuffer.length < 5 + textLength) break
-
-        const text = messageBuffer.toString("utf8", 5, 5 + textLength)
+    messageBuffer = consumeDeviceMessages(messageBuffer, data, {
+      onClipboard: (text) => {
         session.clipboardContent = text
-
-        messageBuffer = messageBuffer.subarray(5 + textLength)
-      } else {
-        console.error(
-          `[scrcpy] [${session.serial}] Unknown device message type: ${msgType}, resetting buffer`
-        )
-        messageBuffer = Buffer.alloc(0)
-      }
-    }
+      },
+      onError: (message) => {
+        console.error(`[scrcpy] [${session.serial}] ${message}`)
+      },
+    })
   })
 }
 
@@ -962,8 +1140,9 @@ export async function startSession(
   const scid = generateScid()
   await setupPortForwarding(s, port, scid)
 
+  let serverProcess: ScrcpyServerProcess
   try {
-    await startScrcpyServer(s, scid, options)
+    serverProcess = await startScrcpyServer(s, scid, options)
   } catch (err) {
     await removePortForwarding(s, port)
     throw err
@@ -988,6 +1167,12 @@ export async function startSession(
       break
     } catch (err) {
       lastError = err as Error
+      // The adb child is gone, so the server it was running is gone too.
+      // Retrying can only burn the rest of the timeout before reporting a
+      // failure we already know about.
+      if (serverProcess.exit) {
+        break
+      }
       await new Promise((resolve) => setTimeout(resolve, retryInterval))
     }
   }
@@ -1004,7 +1189,7 @@ export async function startSession(
       // Ignore if forwarding doesn't exist
     }
     throw new Error(
-      `Failed to connect to scrcpy server on port ${port} within ${connectTimeout}ms`,
+      formatConnectFailure(port, connectTimeout, serverProcess),
       { cause: lastError }
     )
   }

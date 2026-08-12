@@ -131,7 +131,7 @@ Add to `.vscode/mcp.json`:
 
 ### Customizing Environment Variables
 
-If you need to configure custom options (such as pointing to a non-standard `scrcpy-server` path or forcing a specific version), you can add the `"env"` object to your server configuration. For example:
+If you need to configure custom options (such as pointing to a non-standard `scrcpy-server` path), you can add the `"env"` object to your server configuration. For example:
 
 ```json
 {
@@ -140,13 +140,14 @@ If you need to configure custom options (such as pointing to a non-standard `scr
       "command": "npx",
       "args": ["scrcpy-mcp"],
       "env": {
-        "SCRCPY_SERVER_PATH": "C:\\path\\to\\scrcpy-server",
-        "SCRCPY_SERVER_VERSION": "3.3.4"
+        "SCRCPY_SERVER_PATH": "C:\\path\\to\\scrcpy-server"
       }
     }
   }
 }
 ```
+
+*Note: only set `SCRCPY_SERVER_VERSION` if version auto-detection fails — it overrides detection, so a stale value causes the version mismatch described in [Troubleshooting](#troubleshooting). Match it to your installed scrcpy (`scrcpy --version`).*
 
 *Note: On Windows, remember to double-escape backslashes (`\\`) in your configuration paths.*
 
@@ -271,10 +272,10 @@ When only one device is connected, tools auto-detect it. With multiple devices, 
 Accept the RSA fingerprint prompt on the device. If the prompt doesn't appear, revoke USB debugging authorizations in Developer Options and reconnect.
 
 **`start_session` fails**
-Make sure scrcpy is installed and the `scrcpy-server` binary is accessible. Set `SCRCPY_SERVER_PATH` if it's in a non-standard location.
+Make sure scrcpy is installed and the `scrcpy-server` binary is accessible. On Windows, add the folder containing both `scrcpy.exe` and `scrcpy-server` to your PATH, or set `SCRCPY_SERVER_PATH` to the full path of the `scrcpy-server` file.
 * **File vs Directory**: Ensure `SCRCPY_SERVER_PATH` points directly to the `scrcpy-server` **file** itself (e.g. `C:\path\to\scrcpy-server`), NOT to its parent folder.
 * **Android Directory Conflict**: If you previously pushed a directory to the server path, `/data/local/tmp/scrcpy-server.jar` on the Android device might have been created as a folder. Run `adb shell rm -rf /data/local/tmp/scrcpy-server.jar` to delete it.
-* **Version Mismatch**: Ensure `SCRCPY_SERVER_VERSION` matches the exact version of the `scrcpy-server` file (e.g., `"3.3.4"`). If they mismatch, the Android JVM will fail with `java.lang.ClassNotFoundException: com.genymobile.scrcpy.Server`.
+* **Version Mismatch**: The client must send the exact version of the `scrcpy-server` file. If version auto-detection fails (common on Windows or when the MCP is launched by a GUI app without your shell PATH), the client falls back to a default version and the server may exit with a version-mismatch error. Set `SCRCPY_SERVER_VERSION` to your installed version (e.g., `"4.1"`) as a workaround. See the Environment Variables table above.
 
 **Screenshots are slow (~500ms)**
 Start a scrcpy session with `start_session` to enable the fast video stream path. Requires scrcpy and ffmpeg.

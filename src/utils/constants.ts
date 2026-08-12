@@ -38,6 +38,10 @@ export const CONTROL_MSG_TYPE_START_APP = 16
 export const CONTROL_MSG_TYPE_RESET_VIDEO = 17
 
 export const DEVICE_MSG_TYPE_CLIPBOARD = 0
+export const DEVICE_MSG_TYPE_ACK_CLIPBOARD = 1
+
+/** ACK_CLIPBOARD is a fixed 9 bytes: the type byte plus a 64-bit sequence. */
+export const DEVICE_MSG_ACK_CLIPBOARD_SIZE = 9
 
 /**
  * Touch Event Actions

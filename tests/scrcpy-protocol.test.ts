@@ -12,6 +12,7 @@ import {
   serializeSetClipboard,
   serializeRotateDevice,
   serializeStartApp,
+  consumeDeviceMessages,
 } from "../src/utils/scrcpy.js"
 import {
   CONTROL_MSG_TYPE_INJECT_KEYCODE as MSG_INJECT_KEYCODE,
@@ -26,6 +27,9 @@ import {
   CONTROL_MSG_TYPE_SET_DISPLAY_POWER as MSG_SET_DISPLAY_POWER,
   CONTROL_MSG_TYPE_ROTATE_DEVICE as MSG_ROTATE_DEVICE,
   CONTROL_MSG_TYPE_START_APP as MSG_START_APP,
+  DEVICE_MSG_TYPE_CLIPBOARD,
+  DEVICE_MSG_TYPE_ACK_CLIPBOARD,
+  MAX_CLIPBOARD_BYTES,
 } from "../src/utils/constants.js"
 
 describe("serializeInjectKeycode", () => {
@@ -334,5 +338,153 @@ describe("serializeStartApp", () => {
   it("accepts a package name of exactly 255 bytes", () => {
     const maxName = "com." + "a".repeat(251)
     expect(() => serializeStartApp(maxName)).not.toThrow()
+  })
+})
+
+describe("consumeDeviceMessages", () => {
+  const EMPTY = Buffer.alloc(0)
+
+  function clipboardMessage(text: string): Buffer {
+    const textBytes = Buffer.from(text, "utf8")
+    const buf = Buffer.alloc(5 + textBytes.length)
+    buf.writeUInt8(DEVICE_MSG_TYPE_CLIPBOARD, 0)
+    buf.writeUInt32BE(textBytes.length, 1)
+    textBytes.copy(buf, 5)
+    return buf
+  }
+
+  function ackMessage(sequence: bigint): Buffer {
+    const buf = Buffer.alloc(9)
+    buf.writeUInt8(DEVICE_MSG_TYPE_ACK_CLIPBOARD, 0)
+    buf.writeBigUInt64BE(sequence, 1)
+    return buf
+  }
+
+  function collector() {
+    const clipboard: string[] = []
+    const errors: string[] = []
+    return {
+      clipboard,
+      errors,
+      handlers: {
+        onClipboard: (text: string) => clipboard.push(text),
+        onError: (message: string) => errors.push(message),
+      },
+    }
+  }
+
+  it("skips an ack without reporting an error", () => {
+    const { clipboard, errors, handlers } = collector()
+
+    const rest = consumeDeviceMessages(EMPTY, ackMessage(BigInt(1)), handlers)
+
+    expect(errors).toEqual([])
+    expect(clipboard).toEqual([])
+    expect(rest.length).toBe(0)
+  })
+
+  it("keeps a clipboard message that shares a read with an ack", () => {
+    // The regression: an ack used to be unparseable, and the recovery for that
+    // dropped the whole buffer — taking the clipboard payload behind it with it,
+    // leaving clipboard_get to time out or return stale text.
+    const { clipboard, errors, handlers } = collector()
+
+    const rest = consumeDeviceMessages(
+      EMPTY,
+      Buffer.concat([ackMessage(BigInt(7)), clipboardMessage("copied text")]),
+      handlers
+    )
+
+    expect(errors).toEqual([])
+    expect(clipboard).toEqual(["copied text"])
+    expect(rest.length).toBe(0)
+  })
+
+  it("holds a split ack until the rest of it arrives", () => {
+    const { clipboard, errors, handlers } = collector()
+    const ack = ackMessage(BigInt(3))
+
+    const afterHead = consumeDeviceMessages(EMPTY, ack.subarray(0, 4), handlers)
+    expect(errors).toEqual([])
+    expect(afterHead.length).toBe(4)
+
+    const rest = consumeDeviceMessages(
+      afterHead,
+      Buffer.concat([ack.subarray(4), clipboardMessage("later")]),
+      handlers
+    )
+
+    expect(errors).toEqual([])
+    expect(clipboard).toEqual(["later"])
+    expect(rest.length).toBe(0)
+  })
+
+  it("delivers every clipboard message in a batched read", () => {
+    const { clipboard, handlers } = collector()
+
+    consumeDeviceMessages(
+      EMPTY,
+      Buffer.concat([
+        clipboardMessage("first"),
+        ackMessage(BigInt(1)),
+        clipboardMessage("second"),
+      ]),
+      handlers
+    )
+
+    expect(clipboard).toEqual(["first", "second"])
+  })
+
+  it("carries a partial clipboard message over to the next read", () => {
+    const { clipboard, handlers } = collector()
+    const message = clipboardMessage("split payload")
+
+    const rest = consumeDeviceMessages(EMPTY, message.subarray(0, 8), handlers)
+    expect(clipboard).toEqual([])
+
+    consumeDeviceMessages(rest, message.subarray(8), handlers)
+    expect(clipboard).toEqual(["split payload"])
+  })
+
+  it("preserves a lone type byte rather than treating it as truncated", () => {
+    const { errors, handlers } = collector()
+
+    const rest = consumeDeviceMessages(
+      EMPTY,
+      Buffer.from([DEVICE_MSG_TYPE_CLIPBOARD]),
+      handlers
+    )
+
+    expect(errors).toEqual([])
+    expect(rest.length).toBe(1)
+  })
+
+  it("drops the buffer on an unknown message type", () => {
+    // Nothing encodes the length of a type we do not know, so there is no way to
+    // find the next message boundary — the buffer has to go.
+    const { errors, handlers } = collector()
+
+    const rest = consumeDeviceMessages(
+      EMPTY,
+      Buffer.concat([Buffer.from([0x7f]), clipboardMessage("unreachable")]),
+      handlers
+    )
+
+    expect(errors).toEqual(["Unknown device message type: 127, resetting buffer"])
+    expect(rest.length).toBe(0)
+  })
+
+  it("drops the buffer when a clipboard payload exceeds the cap", () => {
+    const { clipboard, errors, handlers } = collector()
+    const oversized = Buffer.alloc(5)
+    oversized.writeUInt8(DEVICE_MSG_TYPE_CLIPBOARD, 0)
+    oversized.writeUInt32BE(MAX_CLIPBOARD_BYTES + 1, 1)
+
+    const rest = consumeDeviceMessages(EMPTY, oversized, handlers)
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain("Clipboard payload too large")
+    expect(clipboard).toEqual([])
+    expect(rest.length).toBe(0)
   })
 })
