@@ -113,11 +113,11 @@ export function registerSessionTools(server: McpServer): void {
   server.registerTool(
     "version",
     {
-      description: "Report which scrcpy version is being used by the MCP server. The version is detected from the SCRCPY_SERVER_VERSION environment variable, the scrcpy --version binary, or a built-in default.",
+      description: "Report which scrcpy version is being used by the MCP server. The version is detected from the SCRCPY_SERVER_VERSION environment variable, the scrcpy --version binary on PATH, the scrcpy binary next to the resolved scrcpy-server, or a built-in default.",
       inputSchema: {},
       outputSchema: {
         version: z.string().describe("Scrcpy version string (e.g. '4.0', '2.7')"),
-        source: z.enum(["env", "binary", "default"]).describe("Where the version was resolved from: 'env' (SCRCPY_SERVER_VERSION env var), 'binary' (scrcpy --version), or 'default' (built-in constant)"),
+        source: z.enum(["env", "binary", "server-sibling", "default"]).describe("Where the version was resolved from: 'env' (SCRCPY_SERVER_VERSION env var), 'binary' (scrcpy --version on PATH), 'server-sibling' (the scrcpy binary next to the resolved scrcpy-server), or 'default' (built-in constant)"),
       },
       annotations: {
         title: "Scrcpy Version",

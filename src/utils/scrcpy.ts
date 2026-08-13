@@ -539,7 +539,26 @@ function findScrcpyBinaryOnPath(): string | null {
   return null
 }
 
-export function findScrcpyServer(): string | null {
+function scrcpyBinaryNextTo(serverPath: string): string | null {
+  // Every official distribution ships the client next to the server, which is
+  // the same assumption the PATH-sibling discovery below already relies on.
+  // Probing it means executing a binary next to whatever SCRCPY_SERVER_PATH
+  // points at. That is a deliberate choice: the very file it sits beside is
+  // about to be pushed to the device and executed there, so the user already
+  // has to trust that directory for a session to be possible at all.
+  const binary = path.join(
+    path.dirname(serverPath),
+    process.platform === "win32" ? "scrcpy.exe" : "scrcpy"
+  )
+  return isExistingFile(binary) ? binary : null
+}
+
+/**
+ * Resolve the scrcpy-server path, without memoization. Prefer
+ * findScrcpyServer() at call sites; this uncached form exists so the
+ * resolution ladder can be unit-tested independently of the cache.
+ */
+export function computeScrcpyServerPath(): string | null {
   const envPath = process.env.SCRCPY_SERVER_PATH
   if (envPath && isExistingFile(envPath)) {
     return envPath
@@ -575,6 +594,24 @@ export function findScrcpyServer(): string | null {
   return null
 }
 
+// Only successful resolutions are cached. Caching the miss too would bound the
+// cost identically, but it would also turn "install scrcpy and retry" into
+// "install scrcpy and restart the MCP server", and a miss costs nothing to
+// re-run beyond the failed lookup it already performed.
+let cachedScrcpyServerPath: string | null = null
+
+/**
+ * Resolve the scrcpy-server path. Memoized, because the version ladder now
+ * consults it too: without the cache a single session start would run
+ * `which scrcpy` twice, and the two resolutions could in principle disagree.
+ */
+export function findScrcpyServer(): string | null {
+  if (!cachedScrcpyServerPath) {
+    cachedScrcpyServerPath = computeScrcpyServerPath()
+  }
+  return cachedScrcpyServerPath
+}
+
 // Memoized: the version cannot change mid-process, and the uncached form runs
 // a blocking execFileSync per call. Caching also guarantees every caller in a
 // session start sees the same version, so the server launch args and the
@@ -584,8 +621,25 @@ let cachedScrcpyVersion: DetectedVersion | null = null
 export interface DetectedVersion {
   version: string
   // Where the version was resolved from: the SCRCPY_SERVER_VERSION env var,
-  // the `scrcpy --version` binary, or the built-in default constant.
-  source: "env" | "binary" | "default"
+  // the `scrcpy --version` binary on PATH, the scrcpy binary sitting next to
+  // the resolved scrcpy-server, or the built-in default constant.
+  source: "env" | "binary" | "server-sibling" | "default"
+}
+
+function probeScrcpyBinaryVersion(binary: string): string | null {
+  try {
+    const output = execFileSync(binary, ["--version"], {
+      timeout: 5000,
+      encoding: "utf8",
+    })
+    // Output format: "scrcpy 2.7 <https://github.com/Genymobile/scrcpy>"
+    // or: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>"
+    const match = output.match(/scrcpy\s+(\d+\.\d+(?:\.\d+)?)/)
+    return match ? match[1] : null
+  } catch {
+    // Binary missing or not executable
+    return null
+  }
 }
 
 /**
@@ -599,24 +653,28 @@ export function computeScrcpyVersionInfo(): DetectedVersion {
     return { version: envVersion, source: "env" }
   }
 
-  try {
-    const output = execFileSync("scrcpy", ["--version"], {
-      timeout: 5000,
-      encoding: "utf8",
-    })
-    // Output format: "scrcpy 2.7 <https://github.com/Genymobile/scrcpy>"
-    // or: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>"
-    const match = output.match(/scrcpy\s+(\d+\.\d+(?:\.\d+)?)/)
-    if (match) {
-      return { version: match[1], source: "binary" }
+  const onPath = probeScrcpyBinaryVersion("scrcpy")
+  if (onPath) {
+    return { version: onPath, source: "binary" }
+  }
+
+  // PATH lookup failed, which is the whole reason SCRCPY_SERVER_PATH exists.
+  // Ask the client shipped alongside the server we already resolved, so one
+  // env var is enough and the reported version describes the server we are
+  // actually about to push rather than some other install on PATH.
+  const serverPath = findScrcpyServer()
+  const sibling = serverPath ? scrcpyBinaryNextTo(serverPath) : null
+  if (sibling) {
+    const fromSibling = probeScrcpyBinaryVersion(sibling)
+    if (fromSibling) {
+      return { version: fromSibling, source: "server-sibling" }
     }
-  } catch {
-    // scrcpy CLI not available, fall through
   }
 
   console.error(
-    `[scrcpy] Warning: could not detect scrcpy version from binary or ` +
-      `SCRCPY_SERVER_VERSION environment variable; falling back to default ` +
+    `[scrcpy] Warning: could not detect scrcpy version from the binary on ` +
+      `PATH, from a scrcpy binary next to the resolved scrcpy-server, or from ` +
+      `the SCRCPY_SERVER_VERSION environment variable; falling back to default ` +
       `${SCRCPY_SERVER_VERSION}. Set SCRCPY_SERVER_VERSION if the installed ` +
       `server version differs.`
   )
@@ -644,11 +702,13 @@ export function detectScrcpyVersion(): string {
 }
 
 /**
- * Test-only: clear the memoized version so detectScrcpyVersionInfo() can be
- * exercised fresh without depending on call order across test files.
+ * Test-only: clear the memoized version and server path so the ladders can be
+ * exercised fresh without depending on call order across test files. Both are
+ * cleared together because the version ladder consults the server path.
  */
-export function __resetScrcpyVersionCacheForTests(): void {
+export function __resetScrcpyDetectionCachesForTests(): void {
   cachedScrcpyVersion = null
+  cachedScrcpyServerPath = null
 }
 
 interface ParsedVersion {
