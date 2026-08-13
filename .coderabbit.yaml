@@ -46,7 +46,12 @@ reviews:
       instructions: |
         Review TypeScript source with these project conventions in mind:
         - ESM imports with `.js` extension for local modules
-        - No semicolons; 2-space indentation; max ~100 chars per line
+        - No semicolons; 2-space indentation
+        - Max ~100 chars per line applies to code only. The `max-len` rule in
+          eslint.config.js sets ignoreStrings, ignoreTemplateLiterals, ignoreUrls
+          and ignoreRegExpLiterals, so long single-line tool `description` and
+          `.describe()` strings are intentional and must not be flagged as
+          length violations. `npm run lint` is the authority on formatting.
         - camelCase for functions/variables, PascalCase for types, snake_case for tool names
         - Prefer `async/await`, early returns, and minimal changes
         - MCP tool registrations must include `inputSchema`, `outputSchema`, `annotations`, and `structuredContent`

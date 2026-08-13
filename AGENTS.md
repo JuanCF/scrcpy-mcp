@@ -88,7 +88,7 @@ import { execAdbShell, resolveSerial } from "../utils/adb.js";
 ### Formatting
 
 - No semicolons at end of statements
-- 2-space indentation, max line length ~100 characters
+- 2-space indentation, max line length ~100 characters — for code. String literals, template literals, URLs and regexes are exempt (`max-len` in `eslint.config.js` sets `ignoreStrings`, `ignoreTemplateLiterals`, `ignoreUrls`, `ignoreRegExpLiterals`), so the long single-line tool `description` and `.describe()` strings are intentional; don't rewrap them. `npm run lint` is the authority.
 - Trailing commas in multiline arrays/objects
 
 ### Types
