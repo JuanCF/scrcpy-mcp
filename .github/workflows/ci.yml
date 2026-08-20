@@ -55,12 +55,33 @@ jobs:
         run: npm test
 
   integration-test:
+    name: integration-test (scrcpy ${{ matrix.scrcpy-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [lint-and-build, test]
-    env:
-      SCRCPY_SERVER_VERSION: "3.3.4"
-      SCRCPY_SERVER_SHA256: "8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e"
+    strategy:
+      # The two versions exercise different wire formats, so a failure in one
+      # says nothing about the other -- cancelling the sibling would just hide
+      # half the answer.
+      fail-fast: false
+      matrix:
+        # videoMetaLayout() branches at scrcpy 4.0: 4.x sends an 80-byte device
+        # meta header, earlier versions the shorter one. One version on each
+        # side of that branch keeps both paths covered against a real device.
+        #
+        # Pinned rather than tracking "latest" because each download is checked
+        # against its published SHA256 (from the release's SHA256SUMS.txt), and
+        # because an upstream release should never be able to turn an unrelated
+        # PR red on its own. Bump deliberately when supporting a new version.
+        #
+        # The version is deliberately not exported as SCRCPY_SERVER_VERSION:
+        # the MCP server reads that name at runtime and it overrides version
+        # detection, which would stop the run from exercising the ladder.
+        include:
+          - scrcpy-version: "3.3.4"
+            scrcpy-sha256: "0305d98c06178c67e12427bbf340c436d0d58c9e2a39bf9ffbbf8f54d7ef95a5"
+          - scrcpy-version: "4.1"
+            scrcpy-sha256: "ad56ae8bfeedf41e824945c11dbf55fcb092b3e615b9b486f48a50e30d389635"
 
     steps:
       - name: Checkout
@@ -107,18 +128,33 @@ jobs:
           disable-animations: true
           script: echo "Generated AVD snapshot for caching."
 
-      - name: Download scrcpy-server
+      # Install scrcpy the way a user does: the official release archive, client
+      # and server together, discovered through PATH. Downloading the server jar
+      # on its own and pointing SCRCPY_SERVER_PATH at it would test a shape
+      # almost nobody runs, and would skip the client/server pairing entirely.
+      # The portable Linux build needs only libudev and libcap, both already on
+      # the runner, so no apt install is required.
+      - name: Install scrcpy
         run: |
-          mkdir -p ~/.local/share/scrcpy
-          curl --fail -L -o /tmp/scrcpy-server \
-            https://github.com/Genymobile/scrcpy/releases/download/v${{ env.SCRCPY_SERVER_VERSION }}/scrcpy-server-v${{ env.SCRCPY_SERVER_VERSION }}
-          echo "${{ env.SCRCPY_SERVER_SHA256 }}  /tmp/scrcpy-server" | sha256sum --check
-          mv /tmp/scrcpy-server ~/.local/share/scrcpy/scrcpy-server
+          ARCHIVE=scrcpy-linux-x86_64-v${{ matrix.scrcpy-version }}
+          curl --fail -L -o /tmp/scrcpy.tar.gz \
+            https://github.com/Genymobile/scrcpy/releases/download/v${{ matrix.scrcpy-version }}/$ARCHIVE.tar.gz
+          echo "${{ matrix.scrcpy-sha256 }}  /tmp/scrcpy.tar.gz" | sha256sum --check
+          mkdir -p ~/.local/opt
+          tar -xzf /tmp/scrcpy.tar.gz -C ~/.local/opt
+          # The archive bundles its own adb; drop it so the emulator keeps
+          # talking to the runner's platform-tools adb.
+          rm -f ~/.local/opt/$ARCHIVE/adb
+          echo "$HOME/.local/opt/$ARCHIVE" >> "$GITHUB_PATH"
+
+      - name: Verify scrcpy resolves as a pair
+        run: |
+          which scrcpy
+          scrcpy --version
+          test -f "$(dirname "$(which scrcpy)")/scrcpy-server"
 
       - name: Run integration tests
         uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b
-        env:
-          SCRCPY_SERVER_PATH: ${{ env.HOME }}/.local/share/scrcpy/scrcpy-server
         with:
           api-level: 30
           arch: x86_64
