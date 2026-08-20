@@ -539,18 +539,191 @@ function findScrcpyBinaryOnPath(): string | null {
   return null
 }
 
-function scrcpyBinaryNextTo(serverPath: string): string | null {
-  // Every official distribution ships the client next to the server, which is
-  // the same assumption the PATH-sibling discovery below already relies on.
-  // Probing it means executing a binary next to whatever SCRCPY_SERVER_PATH
-  // points at. That is a deliberate choice: the very file it sits beside is
-  // about to be pushed to the device and executed there, so the user already
-  // has to trust that directory for a session to be possible at all.
-  const binary = path.join(
-    path.dirname(serverPath),
-    process.platform === "win32" ? "scrcpy.exe" : "scrcpy"
-  )
-  return isExistingFile(binary) ? binary : null
+// Upstream ships exactly two layouts, and both keep the client and the server
+// one relative step apart:
+//
+//   portable/flat   <dir>/scrcpy          <dir>/scrcpy-server
+//   prefix install  <prefix>/bin/scrcpy   <prefix>/share/scrcpy/scrcpy-server
+//
+// The flat form comes from the release archives (Windows zip, Linux tar.gz and
+// macOS all build with -Dportable=true); the prefix form from `ninja install`,
+// install_release.sh and distro packages, where server/meson.build installs to
+// 'share/scrcpy' and the client compiles in PREFIX "/share/scrcpy/". Deriving
+// one end from the other is therefore exact rather than a guess, and it adapts
+// to any prefix -- /usr, /usr/local, /opt/homebrew, a Nix store path, Termux --
+// without naming a single absolute location.
+const SERVER_FILENAME = "scrcpy-server"
+
+function clientFilename(): string {
+  return process.platform === "win32" ? "scrcpy.exe" : "scrcpy"
+}
+
+// Symlink farms (Homebrew's bin/scrcpy -> Cellar/scrcpy/<v>/bin/scrcpy) would
+// otherwise derive the counterpart from the link's directory instead of the
+// install's. A path that cannot be resolved is used as-is, so a broken symlink
+// degrades to "not found" rather than throwing.
+function realDirOf(filePath: string): string {
+  const dir = path.dirname(filePath)
+  try {
+    return fs.realpathSync(dir)
+  } catch {
+    return dir
+  }
+}
+
+function firstExistingFile(candidates: string[]): string | null {
+  for (const candidate of candidates) {
+    const normalized = path.normalize(candidate)
+    if (isExistingFile(normalized)) {
+      return normalized
+    }
+  }
+  return null
+}
+
+/**
+ * Find the scrcpy client belonging to the same install as `serverPath`.
+ *
+ * Probing it means executing a binary next to, or one prefix step above,
+ * whatever SCRCPY_SERVER_PATH points at. That is a deliberate choice: the very
+ * file it pairs with is about to be pushed to the device and executed there, so
+ * the user already has to trust that install for a session to be possible at all.
+ */
+function clientForServer(serverPath: string): string | null {
+  const dir = realDirOf(serverPath)
+  const candidates = [path.join(dir, clientFilename())]
+
+  // <prefix>/share/scrcpy/scrcpy-server -> <prefix>/bin/scrcpy
+  if (path.basename(dir) === "scrcpy" && path.basename(path.dirname(dir)) === "share") {
+    candidates.push(path.join(dir, "..", "..", "bin", clientFilename()))
+  }
+
+  return firstExistingFile(candidates)
+}
+
+/** Find the scrcpy-server belonging to the same install as `clientPath`. */
+function serverForClient(clientPath: string): string | null {
+  const dir = realDirOf(clientPath)
+  const candidates = [path.join(dir, SERVER_FILENAME)]
+
+  // <prefix>/bin/scrcpy -> <prefix>/share/scrcpy/scrcpy-server
+  if (path.basename(dir) === "bin") {
+    candidates.push(path.join(dir, "..", "share", "scrcpy", SERVER_FILENAME))
+  }
+
+  return firstExistingFile(candidates)
+}
+
+// Asking the package manager where it put the server keeps discovery honest on
+// hosts we have never seen: it reports the prefix that distribution actually
+// chose instead of us enumerating the ones we happen to know. Only reached when
+// neither SCRCPY_SERVER_PATH nor PATH resolved, so the cost is not paid in the
+// common case. Windows has no equivalent, and needs none -- its installs are the
+// portable archives that PATH discovery already covers.
+const PACKAGE_QUERIES: ReadonlyArray<{
+  command: string
+  args: string[]
+  map?: (line: string) => string
+}> = [
+  // Debian ships the jar in its own package, so ask for that one first.
+  { command: "dpkg", args: ["-L", "scrcpy-server"] },
+  { command: "dpkg", args: ["-L", "scrcpy"] },
+  { command: "pacman", args: ["-Ql", "scrcpy"], map: (line) => line.split(/\s+/)[1] ?? "" },
+  { command: "rpm", args: ["-ql", "scrcpy"] },
+  { command: "apk", args: ["info", "-L", "scrcpy"] },
+  {
+    command: "brew",
+    args: ["--prefix", "scrcpy"],
+    map: (line) => path.join(line, "share", "scrcpy", SERVER_FILENAME),
+  },
+]
+
+function serverFromPackageManager(): string | null {
+  for (const query of PACKAGE_QUERIES) {
+    let output: string
+    try {
+      output = execFileSync(query.command, query.args, {
+        encoding: "utf8",
+        timeout: 5000,
+        // A tool that does not know the package writes to stderr and exits
+        // non-zero. That is an expected outcome of asking, not a fault worth
+        // showing the user, so keep it out of the MCP server's log.
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+    } catch {
+      // Tool absent, or it does not know the package. Try the next one.
+      continue
+    }
+
+    for (const rawLine of output.split(/\r?\n/)) {
+      const line = rawLine.trim()
+      if (!line) continue
+
+      let candidate = query.map ? query.map(line) : line
+      if (!candidate) continue
+      // apk lists package contents relative to the filesystem root.
+      if (!path.isAbsolute(candidate)) {
+        candidate = path.join(path.sep, candidate)
+      }
+
+      if (path.basename(candidate) === SERVER_FILENAME && isExistingFile(candidate)) {
+        return candidate
+      }
+    }
+  }
+
+  return null
+}
+
+export interface ScrcpyInstall {
+  serverPath: string
+  // The client that belongs to the same install, when one could be derived. It
+  // is the only trustworthy source for the version of `serverPath`.
+  clientPath: string | null
+  // Which rung resolved the install: the SCRCPY_SERVER_PATH env var, the client
+  // found on PATH, or a package manager's own records.
+  origin: "env-path" | "path" | "package-manager"
+}
+
+/**
+ * Resolve the scrcpy install to use, without memoization. Prefer
+ * resolveScrcpyInstall() at call sites; this uncached form exists so the
+ * resolution ladder can be unit-tested independently of the cache.
+ *
+ * Every rung yields a client/server *pair* anchored on one end. Resolving the
+ * two separately is what let the reported version describe a different install
+ * than the file being pushed, which the server rejects outright:
+ * "The server version (3.3.4) does not match the client (1.25)".
+ */
+export function computeScrcpyInstall(): ScrcpyInstall | null {
+  // Setting SCRCPY_SERVER_PATH is the user designating one specific install, so
+  // that install's own client is the authority on its version -- even when some
+  // other scrcpy comes first on PATH.
+  const envPath = process.env.SCRCPY_SERVER_PATH
+  if (envPath && isExistingFile(envPath)) {
+    return { serverPath: envPath, clientPath: clientForServer(envPath), origin: "env-path" }
+  }
+
+  // Only one scrcpy on PATH can ever run, so the first match is unambiguous.
+  // Deriving the server from it keeps the pair consistent.
+  const clientOnPath = findScrcpyBinaryOnPath()
+  if (clientOnPath) {
+    const serverPath = serverForClient(clientOnPath)
+    if (serverPath) {
+      return { serverPath, clientPath: clientOnPath, origin: "path" }
+    }
+  }
+
+  const packagedServer = serverFromPackageManager()
+  if (packagedServer) {
+    return {
+      serverPath: packagedServer,
+      clientPath: clientForServer(packagedServer),
+      origin: "package-manager",
+    }
+  }
+
+  return null
 }
 
 /**
@@ -559,57 +732,29 @@ function scrcpyBinaryNextTo(serverPath: string): string | null {
  * resolution ladder can be unit-tested independently of the cache.
  */
 export function computeScrcpyServerPath(): string | null {
-  const envPath = process.env.SCRCPY_SERVER_PATH
-  if (envPath && isExistingFile(envPath)) {
-    return envPath
-  }
-
-  // Try to discover the server next to the scrcpy executable on PATH. This
-  // matches how the official scrcpy client works and covers Windows zip
-  // installs where users add the scrcpy directory to PATH.
-  const scrcpyBinary = findScrcpyBinaryOnPath()
-  if (scrcpyBinary) {
-    const serverNextToBinary = path.join(path.dirname(scrcpyBinary), "scrcpy-server")
-    if (isExistingFile(serverNextToBinary)) {
-      return serverNextToBinary
-    }
-  }
-
-  const homeDir = process.env.HOME || process.env.USERPROFILE
-  const commonPaths: string[] = [
-    "/usr/local/share/scrcpy/scrcpy-server",
-    "/usr/share/scrcpy/scrcpy-server",
-  ]
-
-  if (homeDir) {
-    commonPaths.unshift(path.join(homeDir, ".local", "share", "scrcpy", "scrcpy-server"))
-  }
-
-  for (const p of commonPaths) {
-    if (isExistingFile(p)) {
-      return p
-    }
-  }
-
-  return null
+  return computeScrcpyInstall()?.serverPath ?? null
 }
 
 // Only successful resolutions are cached. Caching the miss too would bound the
 // cost identically, but it would also turn "install scrcpy and retry" into
 // "install scrcpy and restart the MCP server", and a miss costs nothing to
 // re-run beyond the failed lookup it already performed.
-let cachedScrcpyServerPath: string | null = null
+let cachedScrcpyInstall: ScrcpyInstall | null = null
 
 /**
- * Resolve the scrcpy-server path. Memoized, because the version ladder now
- * consults it too: without the cache a single session start would run
- * `which scrcpy` twice, and the two resolutions could in principle disagree.
+ * Resolve the scrcpy install. Memoized, so a single session start runs the
+ * discovery commands once and every caller sees the same client/server pair.
  */
-export function findScrcpyServer(): string | null {
-  if (!cachedScrcpyServerPath) {
-    cachedScrcpyServerPath = computeScrcpyServerPath()
+export function resolveScrcpyInstall(): ScrcpyInstall | null {
+  if (!cachedScrcpyInstall) {
+    cachedScrcpyInstall = computeScrcpyInstall()
   }
-  return cachedScrcpyServerPath
+  return cachedScrcpyInstall
+}
+
+/** Resolve the scrcpy-server path to push. Memoized via resolveScrcpyInstall(). */
+export function findScrcpyServer(): string | null {
+  return resolveScrcpyInstall()?.serverPath ?? null
 }
 
 // Memoized: the version cannot change mid-process, and the uncached form runs
@@ -620,10 +765,20 @@ let cachedScrcpyVersion: DetectedVersion | null = null
 
 export interface DetectedVersion {
   version: string
-  // Where the version was resolved from: the SCRCPY_SERVER_VERSION env var,
-  // the `scrcpy --version` binary on PATH, the scrcpy binary sitting next to
-  // the resolved scrcpy-server, or the built-in default constant.
-  source: "env" | "binary" | "server-sibling" | "default"
+  // Where the version was resolved from: the SCRCPY_SERVER_VERSION env var, the
+  // client paired with the server that SCRCPY_SERVER_PATH names, the client
+  // found on PATH, the client of a package-manager-reported install, or the
+  // built-in default constant.
+  source: "env" | "binary" | "server-sibling" | "package-manager" | "default"
+}
+
+// Which rung anchored the install, expressed as the version's provenance. The
+// names predate the pairing rework and are kept so the `version` tool's output
+// stays stable for existing users.
+const VERSION_SOURCE_BY_ORIGIN: Record<ScrcpyInstall["origin"], DetectedVersion["source"]> = {
+  "env-path": "server-sibling",
+  path: "binary",
+  "package-manager": "package-manager",
 }
 
 function probeScrcpyBinaryVersion(binary: string): string | null {
@@ -648,35 +803,27 @@ function probeScrcpyBinaryVersion(binary: string): string | null {
  * so the resolution ladder can be unit-tested independently of the cache.
  */
 export function computeScrcpyVersionInfo(): DetectedVersion {
+  // An explicit override, and independent of which install is found.
   const envVersion = process.env.SCRCPY_SERVER_VERSION
   if (envVersion) {
     return { version: envVersion, source: "env" }
   }
 
-  const onPath = probeScrcpyBinaryVersion("scrcpy")
-  if (onPath) {
-    return { version: onPath, source: "binary" }
-  }
-
-  // PATH lookup failed, which is the whole reason SCRCPY_SERVER_PATH exists.
-  // Ask the client shipped alongside the server we already resolved, so one
-  // env var is enough and the reported version describes the server we are
-  // actually about to push rather than some other install on PATH.
-  const serverPath = findScrcpyServer()
-  const sibling = serverPath ? scrcpyBinaryNextTo(serverPath) : null
-  if (sibling) {
-    const fromSibling = probeScrcpyBinaryVersion(sibling)
-    if (fromSibling) {
-      return { version: fromSibling, source: "server-sibling" }
+  // Ask the client that belongs to the very server we are about to push, rather
+  // than whatever scrcpy answers first on PATH.
+  const install = resolveScrcpyInstall()
+  if (install?.clientPath) {
+    const version = probeScrcpyBinaryVersion(install.clientPath)
+    if (version) {
+      return { version, source: VERSION_SOURCE_BY_ORIGIN[install.origin] }
     }
   }
 
   console.error(
-    `[scrcpy] Warning: could not detect scrcpy version from the binary on ` +
-      `PATH, from a scrcpy binary next to the resolved scrcpy-server, or from ` +
-      `the SCRCPY_SERVER_VERSION environment variable; falling back to default ` +
-      `${SCRCPY_SERVER_VERSION}. Set SCRCPY_SERVER_VERSION if the installed ` +
-      `server version differs.`
+    `[scrcpy] Warning: could not detect scrcpy version -- no scrcpy client was ` +
+      `found for the resolved scrcpy-server, and SCRCPY_SERVER_VERSION is not ` +
+      `set; falling back to default ${SCRCPY_SERVER_VERSION}. Set ` +
+      `SCRCPY_SERVER_VERSION if the installed server version differs.`
   )
   return { version: SCRCPY_SERVER_VERSION, source: "default" }
 }
@@ -702,13 +849,13 @@ export function detectScrcpyVersion(): string {
 }
 
 /**
- * Test-only: clear the memoized version and server path so the ladders can be
+ * Test-only: clear the memoized install and version so the ladders can be
  * exercised fresh without depending on call order across test files. Both are
- * cleared together because the version ladder consults the server path.
+ * cleared together because the version ladder resolves the install.
  */
 export function __resetScrcpyDetectionCachesForTests(): void {
   cachedScrcpyVersion = null
-  cachedScrcpyServerPath = null
+  cachedScrcpyInstall = null
 }
 
 interface ParsedVersion {

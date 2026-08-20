@@ -30,11 +30,23 @@ vi.mock("child_process", async (importOriginal) => {
 
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>()
-  return { ...actual, statSync: vi.fn() }
+  return { ...actual, statSync: vi.fn(), realpathSync: vi.fn() }
 })
 
 const execFileSyncMock = vi.mocked(execFileSync)
 const statSyncMock = vi.mocked(fs.statSync)
+const realpathSyncMock = vi.mocked(fs.realpathSync)
+
+// Derivation resolves a directory before deriving its counterpart, so symlink
+// farms (Homebrew's bin/scrcpy -> Cellar/scrcpy/<v>/bin/scrcpy) land on the
+// install rather than the link. Tests declare only the links they care about;
+// every other path resolves to itself.
+function mockSymlinks(links: Record<string, string> = {}) {
+  realpathSyncMock.mockImplementation(((p: fs.PathLike) => {
+    const target = String(p)
+    return links[target] ?? target
+  }) as unknown as typeof fs.realpathSync)
+}
 
 // Discovery accepts a path only if it stats as a regular file, so tests declare
 // which paths are files; everything else stats as a directory or throws ENOENT.
@@ -55,9 +67,13 @@ function mockFilesystem(files: string[], directories: string[] = []) {
 
 // Discovery and the version ladder both shell out, so tests declare what each
 // command produces; anything unlisted fails the way a missing binary does.
+// Keys may be the bare command ("scrcpy") or the full invocation
+// ("dpkg -L scrcpy-server"), because the package-manager rung asks one tool
+// several different questions and each must be able to answer differently.
 function mockCommands(outputs: Record<string, string>) {
-  execFileSyncMock.mockImplementation(((file: string) => {
-    const output = outputs[file]
+  execFileSyncMock.mockImplementation(((file: string, args?: string[]) => {
+    const invocation = [file, ...(args ?? [])].join(" ")
+    const output = outputs[invocation] ?? outputs[file]
     if (output === undefined) {
       throw new Error(`command not found: ${file}`)
     }
@@ -72,6 +88,17 @@ const scrcpyBinary = path.join(binDir, "scrcpy")
 const windowsScrcpyBinary = path.join(binDir, "scrcpy.exe")
 const siblingServer = path.join(binDir, "scrcpy-server")
 
+// A prefix install (ninja install, install_release.sh, distro packages) never
+// puts the two files in one directory: the client lands in <prefix>/bin and the
+// server in <prefix>/share/scrcpy. Two prefixes, so tests can put a client in
+// one and a server in the other and assert they are never crossed.
+const prefix = path.join(path.sep, "usr", "local")
+const prefixClient = path.join(prefix, "bin", "scrcpy")
+const prefixServer = path.join(prefix, "share", "scrcpy", "scrcpy-server")
+const otherPrefix = path.join(path.sep, "usr")
+const otherPrefixClient = path.join(otherPrefix, "bin", "scrcpy")
+const otherPrefixServer = path.join(otherPrefix, "share", "scrcpy", "scrcpy-server")
+
 // Both mocks replace module-wide functions, so reset them for every test in the
 // file rather than per-describe. A stale implementation leaking across describe
 // blocks surfaces as an unrelated test failing later, which is hard to trace.
@@ -79,6 +106,8 @@ const siblingServer = path.join(binDir, "scrcpy-server")
 beforeEach(() => {
   execFileSyncMock.mockReset()
   statSyncMock.mockReset()
+  realpathSyncMock.mockReset()
+  mockSymlinks()
   __resetScrcpyDetectionCachesForTests()
 })
 
@@ -182,11 +211,9 @@ describe("computeScrcpyServerPath", () => {
     // `adb push <dir>` would create the remote scrcpy-server.jar as a
     // directory, so a directory must not resolve as the server.
     process.env.SCRCPY_SERVER_PATH = "/env/scrcpy-dir"
-    execFileSyncMock.mockImplementation(() => {
-      throw new Error("not found")
-    })
-    mockFilesystem(["/usr/local/share/scrcpy/scrcpy-server"], ["/env/scrcpy-dir"])
-    expect(computeScrcpyServerPath()).toBe("/usr/local/share/scrcpy/scrcpy-server")
+    mockCommands({ which: `${scrcpyBinary}\n`, where: `${scrcpyBinary}\n` })
+    mockFilesystem([scrcpyBinary, siblingServer], ["/env/scrcpy-dir"])
+    expect(computeScrcpyServerPath()).toBe(siblingServer)
   })
 
   it("discovers server next to scrcpy binary on PATH", () => {
@@ -236,12 +263,66 @@ describe("computeScrcpyServerPath", () => {
     expect(computeScrcpyServerPath()).toBe(siblingServer)
   })
 
-  it("falls back to common Unix paths when PATH lookup fails", () => {
-    execFileSyncMock.mockImplementation(() => {
-      throw new Error("not found")
+  it("derives the server from the PATH client's prefix", () => {
+    // A prefix install has no server beside the client, so discovery has to
+    // follow <prefix>/bin -> <prefix>/share/scrcpy. Without this the client and
+    // the server come from unrelated ladders and can describe different installs.
+    mockCommands({ which: `${prefixClient}\n`, where: `${prefixClient}\n` })
+    mockFilesystem([prefixClient, prefixServer])
+    expect(computeScrcpyServerPath()).toBe(prefixServer)
+  })
+
+  it("never crosses two installs when both are present", () => {
+    // The #56 failure, reachable with no environment variable set at all: the
+    // client that PATH resolves must bring its own server, not the other one.
+    mockCommands({ which: `${otherPrefixClient}\n`, where: `${otherPrefixClient}\n` })
+    mockFilesystem([prefixClient, prefixServer, otherPrefixClient, otherPrefixServer])
+    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
+  })
+
+  it("resolves a symlinked client to the install it points at", () => {
+    // Homebrew's bin/ is a link farm; deriving from the link's own directory
+    // would look for the server under the farm instead of the Cellar.
+    const linked = path.join(path.sep, "opt", "homebrew", "bin", "scrcpy")
+    const cellar = path.join(path.sep, "opt", "homebrew", "Cellar", "scrcpy", "4.1")
+    const cellarClient = path.join(cellar, "bin", "scrcpy")
+    const cellarServer = path.join(cellar, "share", "scrcpy", "scrcpy-server")
+    mockCommands({ which: `${linked}\n`, where: `${linked}\n` })
+    mockFilesystem([linked, cellarClient, cellarServer])
+    mockSymlinks({ [path.dirname(linked)]: path.dirname(cellarClient) })
+    expect(computeScrcpyServerPath()).toBe(cellarServer)
+  })
+
+  it("asks the package manager when neither the env var nor PATH resolves", () => {
+    // No hardcoded prefixes: dpkg reports where this distribution actually put
+    // the server, which is the only way to be right on an unfamiliar host.
+    mockCommands({
+      "dpkg -L scrcpy-server": [
+        path.join(path.sep, "usr", "share", "doc", "scrcpy-server"),
+        path.join(path.sep, "usr", "share", "scrcpy"),
+        otherPrefixServer,
+      ].join("\n"),
     })
-    mockFilesystem(["/usr/local/share/scrcpy/scrcpy-server"])
-    expect(computeScrcpyServerPath()).toBe("/usr/local/share/scrcpy/scrcpy-server")
+    mockFilesystem([otherPrefixServer])
+    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
+  })
+
+  it("reads the package listing formats the other managers use", () => {
+    // pacman prefixes each line with the package name; apk lists paths relative
+    // to the filesystem root; brew answers with a prefix rather than a listing.
+    mockFilesystem([otherPrefixServer])
+
+    mockCommands({ "pacman -Ql scrcpy": `scrcpy ${otherPrefixServer}\n` })
+    __resetScrcpyDetectionCachesForTests()
+    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
+
+    mockCommands({ "apk info -L scrcpy": `${otherPrefixServer.slice(1)}\n` })
+    __resetScrcpyDetectionCachesForTests()
+    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
+
+    mockCommands({ "brew --prefix scrcpy": `${otherPrefix}\n` })
+    __resetScrcpyDetectionCachesForTests()
+    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
   })
 
   it("returns null when no server is found", () => {
@@ -370,13 +451,19 @@ describe("computeScrcpyVersionInfo", () => {
     expect(execFileSyncMock).not.toHaveBeenCalled()
   })
 
-  it("resolves from the scrcpy binary when the env var is unset", () => {
-    execFileSyncMock.mockReturnValue(
-      "scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n"
-    )
+  it("resolves from the client on PATH when the env var is unset", () => {
+    mockFilesystem([scrcpyBinary, siblingServer])
+    mockCommands({
+      which: `${scrcpyBinary}\n`,
+      where: `${scrcpyBinary}\n`,
+      [scrcpyBinary]: "scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n",
+    })
+
     expect(computeScrcpyVersionInfo()).toEqual({ version: "4.0", source: "binary" })
+    // The resolved client is probed by its full path, never a bare `scrcpy`
+    // that PATH could resolve to a different install than the one discovered.
     expect(execFileSyncMock).toHaveBeenCalledWith(
-      "scrcpy",
+      scrcpyBinary,
       ["--version"],
       expect.objectContaining({ encoding: "utf8", timeout: 5000 })
     )
@@ -429,23 +516,58 @@ describe("computeScrcpyVersionInfo", () => {
     }
   })
 
-  it("prefers the binary on PATH over the server's sibling", () => {
-    // Precedence is deliberate: the sibling rung only fires when the PATH probe
-    // fails, so a reachable `scrcpy --version` still answers even when it
-    // belongs to a different install than SCRCPY_SERVER_PATH points at.
-    process.env.SCRCPY_SERVER_PATH = siblingServer
-    mockFilesystem([siblingServer, scrcpyBinary])
+  it("prefers SCRCPY_SERVER_PATH's install over a different scrcpy on PATH", () => {
+    // Issue #56, inverting the precedence this test used to pin. Setting
+    // SCRCPY_SERVER_PATH is the user designating one install, so its own client
+    // is the authority on its version. Announcing the PATH client's version
+    // instead makes the server exit: "The server version (3.3.4) does not match
+    // the client (1.25)". Ordering stays a decision, not an accident.
+    process.env.SCRCPY_SERVER_PATH = prefixServer
+    mockFilesystem([prefixServer, prefixClient, otherPrefixClient, otherPrefixServer])
     mockCommands({
-      scrcpy: "scrcpy 4.1 <https://github.com/Genymobile/scrcpy>\n",
-      [scrcpyBinary]: "scrcpy 3.3.4 <https://github.com/Genymobile/scrcpy>\n",
+      which: `${otherPrefixClient}\n`,
+      where: `${otherPrefixClient}\n`,
+      [otherPrefixClient]: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>\n",
+      [prefixClient]: "scrcpy 3.3.4 <https://github.com/Genymobile/scrcpy>\n",
     })
 
-    expect(computeScrcpyVersionInfo()).toEqual({ version: "4.1", source: "binary" })
+    expect(computeScrcpyVersionInfo()).toEqual({
+      version: "3.3.4",
+      source: "server-sibling",
+    })
     expect(execFileSyncMock).not.toHaveBeenCalledWith(
-      scrcpyBinary,
+      otherPrefixClient,
       expect.anything(),
       expect.anything()
     )
+  })
+
+  it("reports the version of the install PATH resolved, not another one", () => {
+    // The same crossing, reachable with no environment variable set: the
+    // version must describe the server that install is about to push.
+    mockFilesystem([prefixClient, prefixServer, otherPrefixClient, otherPrefixServer])
+    mockCommands({
+      which: `${otherPrefixClient}\n`,
+      where: `${otherPrefixClient}\n`,
+      [otherPrefixClient]: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>\n",
+      [prefixClient]: "scrcpy 3.3.4 <https://github.com/Genymobile/scrcpy>\n",
+    })
+
+    expect(computeScrcpyVersionInfo()).toEqual({ version: "1.25", source: "binary" })
+    expect(findScrcpyServer()).toBe(otherPrefixServer)
+  })
+
+  it("labels a package-manager-resolved install", () => {
+    mockFilesystem([otherPrefixServer, otherPrefixClient])
+    mockCommands({
+      "dpkg -L scrcpy-server": `${otherPrefixServer}\n`,
+      [otherPrefixClient]: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>\n",
+    })
+
+    expect(computeScrcpyVersionInfo()).toEqual({
+      version: "1.25",
+      source: "package-manager",
+    })
   })
 
   it("falls back to the default when no scrcpy binary sits next to the server", () => {
@@ -471,7 +593,12 @@ describe("computeScrcpyVersionInfo", () => {
   })
 
   it("falls back to the default when the binary output does not match", () => {
-    execFileSyncMock.mockReturnValue("not a scrcpy version line")
+    mockFilesystem([scrcpyBinary, siblingServer])
+    mockCommands({
+      which: `${scrcpyBinary}\n`,
+      where: `${scrcpyBinary}\n`,
+      [scrcpyBinary]: "not a scrcpy version line",
+    })
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     expect(computeScrcpyVersionInfo()).toEqual({
       version: SCRCPY_SERVER_VERSION,
@@ -509,8 +636,25 @@ describe("computeScrcpyVersionInfo", () => {
       expect(computeScrcpyVersionInfo()).toEqual({ version: "4.2", source: "env" })
 
       delete process.env.SCRCPY_SERVER_VERSION
-      mockCommands({ scrcpy: "scrcpy 3.3.4 <url>\n" })
+      mockFilesystem([scrcpyBinary, siblingServer])
+      mockCommands({
+        which: `${scrcpyBinary}\n`,
+        where: `${scrcpyBinary}\n`,
+        [scrcpyBinary]: "scrcpy 3.3.4 <url>\n",
+      })
+      __resetScrcpyDetectionCachesForTests()
       expect(computeScrcpyVersionInfo()).toEqual({ version: "3.3.4", source: "binary" })
+
+      mockFilesystem([otherPrefixServer, otherPrefixClient])
+      mockCommands({
+        "dpkg -L scrcpy-server": `${otherPrefixServer}\n`,
+        [otherPrefixClient]: "scrcpy 1.25 <url>\n",
+      })
+      __resetScrcpyDetectionCachesForTests()
+      expect(computeScrcpyVersionInfo()).toEqual({
+        version: "1.25",
+        source: "package-manager",
+      })
 
       process.env.SCRCPY_SERVER_PATH = siblingServer
       mockFilesystem([siblingServer, scrcpyBinary])
@@ -541,7 +685,12 @@ describe("detectScrcpyVersionInfo", () => {
     const originalEnv = process.env.SCRCPY_SERVER_VERSION
     delete process.env.SCRCPY_SERVER_VERSION
     execFileSyncMock.mockReset()
-    execFileSyncMock.mockReturnValue("scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n")
+    mockFilesystem([scrcpyBinary, siblingServer])
+    mockCommands({
+      which: `${scrcpyBinary}\n`,
+      where: `${scrcpyBinary}\n`,
+      [scrcpyBinary]: "scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n",
+    })
 
     try {
       const first = detectScrcpyVersionInfo()
