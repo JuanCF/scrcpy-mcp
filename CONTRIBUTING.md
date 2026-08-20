@@ -18,17 +18,25 @@ development, `npx vitest` (without `run`) keeps the unit tests in watch mode.
 npm run test:integration
 ```
 
-These drive a real device: they need `adb` and `scrcpy` on `PATH` and exactly one
-device attached (`adb devices`). The suite changes device settings and restores
-them in a global teardown, so let a run finish rather than killing it partway.
-CI runs the same suite against an emulator on both scrcpy 3.3.4 and 4.1, the two
-sides of the wire-format branch at scrcpy 4.0.
+These drive a real Android device or emulator. They need `adb` and `scrcpy` on
+`PATH`, and exactly one device connected with USB debugging enabled and the
+connection authorized — `adb devices` must list it as `device`, not
+`unauthorized` or `offline`. `scrcpy` is required for the whole suite, not just
+the session tests: the session file starts a real scrcpy session and takes
+screenshots through it. Screenshots decode via `ffmpeg`, which `npm install`
+supplies through the optional `ffmpeg-static` dependency; if that dependency is
+skipped, a system `ffmpeg` on `PATH` is used instead.
+
+The suite changes device settings and restores them in a global teardown, so let
+a run finish rather than killing it partway. CI runs the same suite against an
+emulator on both scrcpy 3.3.4 and 4.1, the two sides of the wire-format branch
+at scrcpy 4.0.
 
 ### Conventions
 
-`AGENTS.md` documents the code style and project conventions this repo follows —
-imports, formatting, error handling, the MCP tool registration pattern, and the
-checks to run before committing. Read it before your first PR.
+[AGENTS.md](AGENTS.md) documents the code style and project conventions this
+repo follows — imports, formatting, error handling, the MCP tool registration
+pattern, and the checks to run before committing. Read it before your first PR.
 
 ## Pull Requests
 
