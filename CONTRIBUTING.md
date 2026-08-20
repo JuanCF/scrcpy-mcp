@@ -2,6 +2,11 @@
 
 ## Development
 
+Node.js 24 or newer is required. [`.nvmrc`](.nvmrc) pins the version, and CI
+reads that same file, so `nvm use` in the repo root puts you on exactly what
+CI runs. `.npmrc` sets `engine-strict=true`, so `npm install` fails outright
+on an older runtime rather than warning.
+
 ```bash
 npm install
 npm run build   # compile TypeScript → dist/
