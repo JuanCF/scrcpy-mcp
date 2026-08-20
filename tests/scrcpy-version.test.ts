@@ -307,22 +307,28 @@ describe("computeScrcpyServerPath", () => {
     expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
   })
 
-  it("reads the package listing formats the other managers use", () => {
-    // pacman prefixes each line with the package name; apk lists paths relative
-    // to the filesystem root; brew answers with a prefix rather than a listing.
+  // Each manager answers in its own shape: pacman prefixes every line with the
+  // package name, apk lists paths relative to the filesystem root, and brew
+  // answers with a prefix rather than a listing. One case per manager, so a
+  // failure names the manager that broke instead of stopping at the first one.
+  it.each([
+    ["pacman", { "pacman -Ql scrcpy": `scrcpy ${otherPrefixServer}\n` }, otherPrefixServer],
+    ["apk", { "apk info -L scrcpy": `${otherPrefixServer.slice(1)}\n` }, otherPrefixServer],
+    ["brew", { "brew --prefix scrcpy": `${otherPrefix}\n` }, otherPrefixServer],
+  ])("reads the package listing format %s uses", (_manager, commands, expected) => {
     mockFilesystem([otherPrefixServer])
+    mockCommands(commands)
+    expect(computeScrcpyServerPath()).toBe(expected)
+  })
 
-    mockCommands({ "pacman -Ql scrcpy": `scrcpy ${otherPrefixServer}\n` })
-    __resetScrcpyDetectionCachesForTests()
-    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
-
-    mockCommands({ "apk info -L scrcpy": `${otherPrefixServer.slice(1)}\n` })
-    __resetScrcpyDetectionCachesForTests()
-    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
-
-    mockCommands({ "brew --prefix scrcpy": `${otherPrefix}\n` })
-    __resetScrcpyDetectionCachesForTests()
-    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
+  it("keeps spaces in a pacman path", () => {
+    // "<pkg> <path>": splitting the line on whitespace truncates any path that
+    // contains a space, so the server would be silently missed on a prefix like
+    // /opt/my apps/scrcpy.
+    const spacedServer = path.join(path.sep, "opt", "my apps", "scrcpy", "scrcpy-server")
+    mockCommands({ "pacman -Ql scrcpy": `scrcpy ${spacedServer}\n` })
+    mockFilesystem([spacedServer])
+    expect(computeScrcpyServerPath()).toBe(spacedServer)
   })
 
   it("returns null when no server is found", () => {
@@ -587,6 +593,34 @@ describe("computeScrcpyVersionInfo", () => {
     expect(execFileSyncMock).not.toHaveBeenCalledWith(
       loneSibling,
       expect.anything(),
+      expect.anything()
+    )
+    consoleErrorSpy.mockRestore()
+  })
+
+  it("falls back to the default rather than borrowing an unrelated PATH client", () => {
+    // The #56 regression direction: a lone server has no client of its own, and
+    // some other scrcpy is on PATH answering --version. Reporting that version
+    // is exactly what made the device server exit; the default is the only
+    // honest answer, and SCRCPY_SERVER_VERSION is how the user corrects it.
+    const loneServer = path.join(path.sep, "downloads", "scrcpy-server")
+    process.env.SCRCPY_SERVER_PATH = loneServer
+    mockFilesystem([loneServer, otherPrefixClient, otherPrefixServer])
+    mockCommands({
+      which: `${otherPrefixClient}\n`,
+      where: `${otherPrefixClient}\n`,
+      [otherPrefixClient]: "scrcpy 1.25 <https://github.com/Genymobile/scrcpy>",
+    })
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    expect(computeScrcpyVersionInfo()).toEqual({
+      version: SCRCPY_SERVER_VERSION,
+      source: "default",
+    })
+    // The unrelated client must never be probed for this server's version.
+    expect(execFileSyncMock).not.toHaveBeenCalledWith(
+      otherPrefixClient,
+      ["--version"],
       expect.anything()
     )
     consoleErrorSpy.mockRestore()

@@ -628,7 +628,9 @@ const PACKAGE_QUERIES: ReadonlyArray<{
   // Debian ships the jar in its own package, so ask for that one first.
   { command: "dpkg", args: ["-L", "scrcpy-server"] },
   { command: "dpkg", args: ["-L", "scrcpy"] },
-  { command: "pacman", args: ["-Ql", "scrcpy"], map: (line) => line.split(/\s+/)[1] ?? "" },
+  // "<pkg> <path>", and the path may itself contain spaces, so strip only
+  // the package name rather than splitting the whole line on whitespace.
+  { command: "pacman", args: ["-Ql", "scrcpy"], map: (line) => line.replace(/^\S+\s+/, "") },
   { command: "rpm", args: ["-ql", "scrcpy"] },
   { command: "apk", args: ["info", "-L", "scrcpy"] },
   {
@@ -639,6 +641,13 @@ const PACKAGE_QUERIES: ReadonlyArray<{
 ]
 
 function serverFromPackageManager(): string | null {
+  // None of these managers exist on Windows, so every query would be a spawn
+  // that can only fail. Skipping them keeps the miss path cheap on the platform
+  // the comment above already excludes.
+  if (process.platform === "win32") {
+    return null
+  }
+
   for (const query of PACKAGE_QUERIES) {
     let output: string
     try {
