@@ -558,17 +558,25 @@ function clientFilename(): string {
   return process.platform === "win32" ? "scrcpy.exe" : "scrcpy"
 }
 
+// Where to look for a file's counterpart, most specific first.
+//
 // Symlink farms (Homebrew's bin/scrcpy -> Cellar/scrcpy/<v>/bin/scrcpy) would
 // otherwise derive the counterpart from the link's directory instead of the
-// install's. A path that cannot be resolved is used as-is, so a broken symlink
-// degrades to "not found" rather than throwing.
-function realDirOf(filePath: string): string {
-  const dir = path.dirname(filePath)
+// install's -- and the link is usually the file itself, not its directory, so
+// the whole path has to be resolved rather than just the parent. Both
+// directories are searched: the resolved one is where the install keeps its own
+// files, while the link's directory is what anchors the <prefix>/share layout
+// for a distro that symlinks only the binary. A path that cannot be resolved
+// contributes just its literal directory, so a broken symlink degrades to
+// "not found" rather than throwing.
+function installDirsOf(filePath: string): string[] {
+  const dirs = [path.dirname(filePath)]
   try {
-    return fs.realpathSync(dir)
+    dirs.unshift(path.dirname(fs.realpathSync(filePath)))
   } catch {
-    return dir
+    // Unresolvable link: its literal directory is all there is to go on.
   }
+  return [...new Set(dirs)]
 }
 
 function firstExistingFile(candidates: string[]): string | null {
@@ -590,12 +598,15 @@ function firstExistingFile(candidates: string[]): string | null {
  * the user already has to trust that install for a session to be possible at all.
  */
 function clientForServer(serverPath: string): string | null {
-  const dir = realDirOf(serverPath)
-  const candidates = [path.join(dir, clientFilename())]
+  const candidates: string[] = []
 
-  // <prefix>/share/scrcpy/scrcpy-server -> <prefix>/bin/scrcpy
-  if (path.basename(dir) === "scrcpy" && path.basename(path.dirname(dir)) === "share") {
-    candidates.push(path.join(dir, "..", "..", "bin", clientFilename()))
+  for (const dir of installDirsOf(serverPath)) {
+    candidates.push(path.join(dir, clientFilename()))
+
+    // <prefix>/share/scrcpy/scrcpy-server -> <prefix>/bin/scrcpy
+    if (path.basename(dir) === "scrcpy" && path.basename(path.dirname(dir)) === "share") {
+      candidates.push(path.join(dir, "..", "..", "bin", clientFilename()))
+    }
   }
 
   return firstExistingFile(candidates)
@@ -603,12 +614,15 @@ function clientForServer(serverPath: string): string | null {
 
 /** Find the scrcpy-server belonging to the same install as `clientPath`. */
 function serverForClient(clientPath: string): string | null {
-  const dir = realDirOf(clientPath)
-  const candidates = [path.join(dir, SERVER_FILENAME)]
+  const candidates: string[] = []
 
-  // <prefix>/bin/scrcpy -> <prefix>/share/scrcpy/scrcpy-server
-  if (path.basename(dir) === "bin") {
-    candidates.push(path.join(dir, "..", "share", "scrcpy", SERVER_FILENAME))
+  for (const dir of installDirsOf(clientPath)) {
+    candidates.push(path.join(dir, SERVER_FILENAME))
+
+    // <prefix>/bin/scrcpy -> <prefix>/share/scrcpy/scrcpy-server
+    if (path.basename(dir) === "bin") {
+      candidates.push(path.join(dir, "..", "share", "scrcpy", SERVER_FILENAME))
+    }
   }
 
   return firstExistingFile(candidates)

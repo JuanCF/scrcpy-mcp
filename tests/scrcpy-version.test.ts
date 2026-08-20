@@ -37,14 +37,24 @@ const execFileSyncMock = vi.mocked(execFileSync)
 const statSyncMock = vi.mocked(fs.statSync)
 const realpathSyncMock = vi.mocked(fs.realpathSync)
 
-// Derivation resolves a directory before deriving its counterpart, so symlink
-// farms (Homebrew's bin/scrcpy -> Cellar/scrcpy/<v>/bin/scrcpy) land on the
-// install rather than the link. Tests declare only the links they care about;
-// every other path resolves to itself.
+// Derivation resolves a path before deriving its counterpart, so symlink farms
+// (Homebrew's bin/scrcpy -> Cellar/scrcpy/<v>/bin/scrcpy) land on the install
+// rather than the link. Tests declare only the links they care about; every
+// other path resolves to itself. Links are applied to whole path components,
+// the way realpath does, so declaring a directory link also rewrites the paths
+// beneath it -- otherwise a test could pass against a leaf-only lookup that the
+// real filesystem would have resolved.
 function mockSymlinks(links: Record<string, string> = {}) {
   realpathSyncMock.mockImplementation(((p: fs.PathLike) => {
-    const target = String(p)
-    return links[target] ?? target
+    let target = String(p)
+    for (const [link, destination] of Object.entries(links)) {
+      if (target === link) {
+        target = destination
+      } else if (target.startsWith(link + path.sep)) {
+        target = path.join(destination, target.slice(link.length + 1))
+      }
+    }
+    return target
   }) as unknown as typeof fs.realpathSync)
 }
 
@@ -291,6 +301,32 @@ describe("computeScrcpyServerPath", () => {
     mockFilesystem([linked, cellarClient, cellarServer])
     mockSymlinks({ [path.dirname(linked)]: path.dirname(cellarClient) })
     expect(computeScrcpyServerPath()).toBe(cellarServer)
+  })
+
+  it("resolves a client that is itself the symlink", () => {
+    // The shape Homebrew actually installs: bin/ is a real directory holding a
+    // link per binary. Resolving only the parent never leaves bin/, so the
+    // whole path has to be resolved to reach the Cellar.
+    const linked = path.join(path.sep, "opt", "homebrew", "bin", "scrcpy")
+    const cellar = path.join(path.sep, "opt", "homebrew", "Cellar", "scrcpy", "4.1")
+    const cellarClient = path.join(cellar, "bin", "scrcpy")
+    const cellarServer = path.join(cellar, "share", "scrcpy", "scrcpy-server")
+    mockCommands({ which: `${linked}\n`, where: `${linked}\n` })
+    mockFilesystem([linked, cellarClient, cellarServer])
+    mockSymlinks({ [linked]: cellarClient })
+    expect(computeScrcpyServerPath()).toBe(cellarServer)
+  })
+
+  it("keeps the link's own prefix in play when the target sits outside bin", () => {
+    // A distro can point /usr/bin/scrcpy at a private libexec copy while the
+    // server stays in the packaged <prefix>/share. The resolved directory is
+    // not a bin/, so only the link's own directory yields that prefix.
+    const linkedClient = path.join(path.sep, "usr", "bin", "scrcpy")
+    const realClient = path.join(path.sep, "usr", "lib", "scrcpy", "scrcpy")
+    mockCommands({ which: `${linkedClient}\n`, where: `${linkedClient}\n` })
+    mockFilesystem([linkedClient, realClient, otherPrefixServer])
+    mockSymlinks({ [linkedClient]: realClient })
+    expect(computeScrcpyServerPath()).toBe(otherPrefixServer)
   })
 
   it("asks the package manager when neither the env var nor PATH resolves", () => {
