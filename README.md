@@ -21,7 +21,7 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 
 | Requirement | Install | Verify |
 |-------------|---------|--------|
-| **Node.js 22+** | [nodejs.org](https://nodejs.org) or `nvm install` (uses [`.node_version`](.node_version)) | `node --version` |
+| **Node.js 24+** | [nodejs.org](https://nodejs.org) or `nvm install` (uses [`.nvmrc`](.nvmrc)) | `node --version` |
 | **ADB** (Android Platform Tools) | [developer.android.com/tools/releases/platform-tools](https://developer.android.com/tools/releases/platform-tools) | `adb version` |
 | **Android device** with USB debugging | Settings → Developer Options → USB Debugging | `adb devices` |
 

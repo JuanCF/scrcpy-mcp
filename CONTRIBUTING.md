@@ -2,11 +2,46 @@
 
 ## Development
 
+Node.js 24 or newer is required. [`.nvmrc`](.nvmrc) pins the version, and CI
+reads that same file, so `nvm use` in the repo root puts you on exactly what
+CI runs. `.npmrc` sets `engine-strict=true`, so `npm install` fails outright
+on an older runtime rather than warning.
+
 ```bash
 npm install
 npm run build   # compile TypeScript → dist/
-npx vitest      # run tests
+npm run lint    # eslint src (CI gates on this)
+npm test        # unit tests
 ```
+
+`npm run lint:fix` applies the fixes eslint can make on its own. During
+development, `npx vitest` (without `run`) keeps the unit tests in watch mode.
+
+### Integration tests
+
+```bash
+npm run test:integration
+```
+
+These drive a real Android device or emulator. They need `adb` and `scrcpy` on
+`PATH`, and exactly one device connected with USB debugging enabled and the
+connection authorized — `adb devices` must list it as `device`, not
+`unauthorized` or `offline`. `scrcpy` is required for the whole suite, not just
+the session tests: the session file starts a real scrcpy session and takes
+screenshots through it. Screenshots decode via `ffmpeg`, which `npm install`
+supplies through the optional `ffmpeg-static` dependency; if that dependency is
+skipped, a system `ffmpeg` on `PATH` is used instead.
+
+The suite changes device settings and restores them in a global teardown, so let
+a run finish rather than killing it partway. CI runs the same suite against an
+emulator on both scrcpy 3.3.4 and 4.1, the two sides of the wire-format branch
+at scrcpy 4.0.
+
+### Conventions
+
+[AGENTS.md](AGENTS.md) documents the code style and project conventions this
+repo follows — imports, formatting, error handling, the MCP tool registration
+pattern, and the checks to run before committing. Read it before your first PR.
 
 ## Pull Requests
 
