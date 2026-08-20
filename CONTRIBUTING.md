@@ -5,8 +5,30 @@
 ```bash
 npm install
 npm run build   # compile TypeScript → dist/
-npx vitest      # run tests
+npm run lint    # eslint src (CI gates on this)
+npm test        # unit tests
 ```
+
+`npm run lint:fix` applies the fixes eslint can make on its own. During
+development, `npx vitest` (without `run`) keeps the unit tests in watch mode.
+
+### Integration tests
+
+```bash
+npm run test:integration
+```
+
+These drive a real device: they need `adb` and `scrcpy` on `PATH` and exactly one
+device attached (`adb devices`). The suite changes device settings and restores
+them in a global teardown, so let a run finish rather than killing it partway.
+CI runs the same suite against an emulator on both scrcpy 3.3.4 and 4.1, the two
+sides of the wire-format branch at scrcpy 4.0.
+
+### Conventions
+
+`AGENTS.md` documents the code style and project conventions this repo follows —
+imports, formatting, error handling, the MCP tool registration pattern, and the
+checks to run before committing. Read it before your first PR.
 
 ## Pull Requests
 
