@@ -30,7 +30,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "build": "tsup",
@@ -47,7 +47,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22",
+    "@types/node": "^24",
     "eslint": "^10.0.2",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
