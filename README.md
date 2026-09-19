@@ -8,11 +8,12 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 
 ## Features
 
-- **36 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, and video streaming
+- **40 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, video streaming, and audio streaming/recording
 - **scrcpy-first**: uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots (~33ms)
-- **ADB fallback**: every tool works without scrcpy — slower but always available
+- **ADB fallback**: interaction tools work without scrcpy — slower but always available (the audio tools `start_audio_stream`/`audio_record_start` and the video stream require scrcpy)
 - **Image-returning screenshots**: the AI actually sees the screen, not just a file path
 - **UI element finding**: `ui_find_element` returns tap coordinates so the AI can act on what it sees
+- **Audio streaming & recording**: stream device audio to host speakers (`start_audio_stream`) or capture to `.wav`/`.opus` (`audio_record_start`)
 - **Clipboard that works on Android 10+**: scrcpy bypasses the restrictions that break ADB-only solutions
 
 ## Prerequisites
@@ -23,14 +24,15 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 |-------------|---------|--------|
 | **Node.js 24+** | [nodejs.org](https://nodejs.org) or `nvm install` (uses [`.nvmrc`](.nvmrc)) | `node --version` |
 | **ADB** (Android Platform Tools) | [developer.android.com/tools/releases/platform-tools](https://developer.android.com/tools/releases/platform-tools) | `adb version` |
-| **Android device** with USB debugging | Settings → Developer Options → USB Debugging | `adb devices` |
+| **Android device** with USB debugging (Android 11+ for audio) | Settings → Developer Options → USB Debugging | `adb devices` |
 
 ### Optional (for enhanced performance)
 
 | Requirement | Install | Benefit |
 |-------------|---------|---------|
 | **scrcpy** | [github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy/releases) | 10-50x faster input, ~33ms screenshots |
-| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy video stream decoding |
+| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy video stream decoding and audio recording |
+| **ffplay** | Usually packaged with ffmpeg | Required for audio playback and the MJPEG viewer window |
 
 ### Device setup
 
@@ -162,14 +164,42 @@ If you need to configure custom options (such as pointing to a non-standard `scr
 | `start_session` | Start a scrcpy session. When active, input and screenshots use the fast path (10-50x faster). |
 | `stop_session` | Stop the scrcpy session. Tools fall back to ADB. |
 
+`start_session` options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `maxSize` | `1024` | Max video frame dimension in pixels |
+| `maxFps` | `30` | Max frames per second |
+| `audio` | `false` | Capture audio (see the heads-up below) |
+| `audioSource` | `output` | Audio source (`output`, `playback`, `mic`, `voice-call`, …) |
+| `audioDup` | `false` | Keep device playback audible with `audioSource: "playback"` (Android 13+) |
+| `stayAwake` | `false` | Keep the device on for the whole session (scrcpy `--stay-awake`). Applies **only while the device is plugged in**. |
+| `screenOffTimeout` | (device setting) | Screen-off timeout **in seconds** for the whole session (scrcpy `--screen-off-timeout`). Works on battery too. Needs scrcpy 2.5+. |
+
+Both screen-awake options are temporary: scrcpy restores the device's original
+values when the session ends, including when a tool restarts the session to
+turn audio on.
+
 ### Video Streaming
 
 | Tool | Description |
 |------|-------------|
-| `start_video_stream` | Start an HTTP MJPEG video stream and open an ffplay viewer window. Auto-starts a scrcpy session if needed. |
+| `start_video_stream` | Start an HTTP MJPEG video stream and open a viewer window (ffplay). Auto-starts a scrcpy session if needed. |
 | `stop_video_stream` | Stop the video stream and close the viewer window. |
 
+### Audio Streaming & Recording
+
+> **Heads up:** Audio capture is **opt-in** and requires **Android 11+**. The default source `output` uses `REMOTE_SUBMIX`, which **mutes the device's own speakers** while capturing — the audio is moved to the host, not copied. Use `audioSource: "playback"` with `audioDup: true` (Android 13+) to keep the device audible. Recordings are saved on the **host** filesystem.
+
+| Tool | Description |
+|------|-------------|
+| `start_audio_stream` | Stream device audio to the host's speakers via ffplay. Restarts the scrcpy session if it was started without audio. |
+| `stop_audio_stream` | Stop streaming audio to the host. |
+| `audio_record_start` | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. |
+| `audio_record_stop` | Stop the recording and finalise the host-side file. |
+
 ### Device Management
+
 
 | Tool | Description |
 |------|-------------|
@@ -262,7 +292,7 @@ start_session → take screenshots → tap → swipe → ...
 | `SCRCPY_SERVER_PATH` | (auto) | Path to the scrcpy-server binary |
 | `SCRCPY_SERVER_VERSION` | (auto) | Version of the scrcpy-server binary |
 | `FFMPEG_PATH` | `ffmpeg` | Path to the ffmpeg binary |
-| `FFPLAY_PATH` | `ffplay` | Path to the ffplay binary (for the video stream viewer) |
+| `FFPLAY_PATH` | `ffplay` | Path to the ffplay binary (video stream viewer and audio playback) |
 
 When only one device is connected, tools auto-detect it. With multiple devices, pass the `serial` parameter explicitly or set `ANDROID_SERIAL`.
 
@@ -282,6 +312,18 @@ Start a scrcpy session with `start_session` to enable the fast video stream path
 
 **`expand_notifications` / `expand_settings` / `collapse_panels` fail**
 These tools require an active scrcpy session. Run `start_session` first.
+
+**The device screen keeps turning off during long automations**
+Start the session with `stayAwake: true` (plugged in only) or `screenOffTimeout: <seconds>`, which also works on battery. Both are restored when the session ends.
+
+**`start_audio_stream` says ffplay was not found**
+Install ffmpeg (ffplay ships with it), or set `FFPLAY_PATH` to the binary. The same applies to `audio_record_start` and `FFMPEG_PATH`.
+
+**Audio recording is silent**
+`REMOTE_SUBMIX` only captures what apps are actually playing — a recording made while nothing plays is digital silence, which is expected. Also check the device is not muted, and remember the default `output` source moves the audio to the host, so the device goes quiet while capturing. Use `audioSource: "playback"` with `audioDup: true` (Android 13+) to keep it audible.
+
+**Audio tools report audio as unavailable**
+Audio capture needs Android 11+ (SDK 30). On older devices the session still works for video, input, and clipboard.
 
 **Clipboard doesn't work on Android 10+**
 ADB clipboard access is restricted on Android 10+. Start a scrcpy session — the scrcpy clipboard protocol bypasses this restriction.

@@ -12,6 +12,7 @@ import { registerUiTools } from "./tools/ui.js"
 import { registerShellTools } from "./tools/shell.js"
 import { registerFileTools } from "./tools/files.js"
 import { registerVideoTools } from "./tools/video.js"
+import { registerAudioTools } from "./tools/audio.js"
 
 function createServer() {
   const server = new McpServer({
@@ -29,6 +30,7 @@ function createServer() {
   registerShellTools(server)
   registerFileTools(server)
   registerVideoTools(server)
+  registerAudioTools(server)
 
   return server
 }

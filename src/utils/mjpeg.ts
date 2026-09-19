@@ -1,6 +1,7 @@
 import http from "http"
 import { spawn, execFile } from "child_process"
 import { getLatestFrame, getSession } from "./scrcpy.js"
+import { findFfplay } from "./ffmpeg.js"
 
 // On some X11 servers (notably virtual/VM displays), SDL2 picks a GLX-capable
 // visual for every window it creates regardless of renderer, and that visual
@@ -115,8 +116,6 @@ export async function startMjpegServer(serial: string, port: number): Promise<st
 // consumers (screenshots, MJPEG clients, this window). MJPEG also sidesteps the
 // timestamp-less raw-H.264 problems that made ffplay stall before: each part is
 // a complete JPEG, displayed the moment it arrives.
-const findFfplay = (): string => process.env.FFPLAY_PATH || "ffplay"
-
 export async function startStreamViewer(serial: string, url: string): Promise<boolean> {
   const session = getSession(serial)
   if (!session) return false
@@ -199,4 +198,8 @@ export function stopMjpegServer(serial: string): boolean {
 
 export function isMjpegServerRunning(serial: string): boolean {
   return servers.has(serial)
+}
+
+export function getMjpegPort(serial: string): number | null {
+  return servers.get(serial)?.port ?? null
 }

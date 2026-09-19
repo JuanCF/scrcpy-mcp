@@ -370,6 +370,17 @@ These tools manage the scrcpy connection to the device. When a session is active
 | `start_video_stream` | `serial?`, `port?` | Text (JSON) | **scrcpy** / MJPEG | Start an HTTP MJPEG stream of the device screen and open an ffplay viewer window. Auto-starts a scrcpy session if needed. |
 | `stop_video_stream` | `serial?` | Text | MJPEG | Stop the MJPEG stream and close the ffplay viewer window |
 
+### 5.3c Audio Streaming & Recording (4 tools)
+
+Requires Android 11+. The default source `output` uses `REMOTE_SUBMIX`, which mutes the device's own speakers while capturing. Use `audioSource: "playback"` with `audioDup: true` (Android 13+) to keep the device audible. Recordings are written to the host filesystem.
+
+| Tool Name | Parameters | Returns | Via | Description |
+|-----------|-----------|---------|-----|-------------|
+| `start_audio_stream` | `serial?`, `audioSource?`, `audioDup?` | Text (JSON) | **scrcpy** | Stream device audio to the host's speakers via ffplay. Restarts the scrcpy session if it was started without audio. |
+| `stop_audio_stream` | `serial?` | Text | **scrcpy** | Stop streaming audio to the host. |
+| `audio_record_start` | `serial?`, `localPath?`, `format?`, `audioSource?`, `audioDup?` | Text (JSON) | **scrcpy** | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. |
+| `audio_record_stop` | `serial?` | Text (JSON) | **scrcpy** | Stop the recording and finalise the host-side file. |
+
 ### 5.4 Input Control (7 tools)
 
 All input tools use **scrcpy's control protocol natively** when a session is active (~5-10ms). These are the same mechanisms scrcpy uses internally — `INJECT_TOUCH_EVENT`, `INJECT_KEYCODE`, `INJECT_TEXT`, `INJECT_SCROLL_EVENT` — sent directly over the control socket. Falls back to `adb shell input` when no session is active.
@@ -426,22 +437,24 @@ All input tools use **scrcpy's control protocol natively** when a session is act
 ### Tool count summary
 
 | Category | scrcpy native | ADB only | Total |
-|---|---|---|---|---|
+|---|---|---|---|
 | Session | — | — | 2 |
 | Device Management | 4 (screen on/off, rotate, panels) | 2 (list, info) | 8* |
 | Vision | 1 (screenshot via stream) | 2 (record start/stop) | 3 |
 | Video Streaming | 2 (MJPEG stream) | 0 | 2 |
+| Audio Streaming & Recording | 4 (stream/record start/stop) | 0 | 4 |
 | Input | 7 (all via control socket) | 0 (ADB fallback only) | 7 |
 | App Management | 1 (start) | 5 (stop, install, uninstall, list, current) | 6 |
 | UI Automation | 0 | 2 | 2 |
 | Shell | 0 | 1 | 1 |
 | File Transfer | 0 | 3 | 3 |
 | Clipboard | 2 (get/set) | 0 (ADB fallback only) | 2 |
-| **Total** | **17** | **13** | **36** |
+| **Total** | **21** | **13** | **40** |
 
 *\* expand_notifications, expand_settings, collapse_panels have no ADB fallback — they require a scrcpy session.*
 
-**Total: 36 tools** (17 scrcpy-native, 13 ADB-only, 6 with ADB fallback)
+**Total: 40 tools** (21 scrcpy-native, 13 ADB-only, 6 with ADB fallback)
+
 
 ---
 

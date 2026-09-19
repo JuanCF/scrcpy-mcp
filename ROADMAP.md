@@ -285,6 +285,29 @@ Enable watching the device screen in real-time while MCP controls it.
 
 ---
 
+### 6.2 Audio Streaming & Recording
+
+Capture device audio on the host: stream to speakers or record to file.
+
+- [x] 6.2.1 Audio socket plumbing (3-socket connect, 4-byte header parse, AudioHub fan-out)
+- [x] 6.2.2 Implement `audio_record_start` / `audio_record_stop` — host-side `.wav`/`.opus` capture
+- [x] 6.2.3 Implement `start_audio_stream` / `stop_audio_stream` — playback via `ffplay -nodisp`
+- [ ] 6.2.4 Frame-meta support and compressed audio codecs (opus/aac/flac)
+- [ ] 6.2.5 Synced audio+video viewer
+
+**Use cases:**
+- Transcribe device audio from a captured `.wav`
+- Verify sounds and voice prompts during automation
+- Real-time audio feedback while watching a stream
+
+**Technical notes:**
+- Requires Android 11+ (SDK >= 30)
+- Default source `output` mutes the device while capturing; `playback` + `audioDup` keeps it audible on Android 13+
+- Raw PCM is S16LE, 48000 Hz, stereo (~192 KB/s)
+- Recordings are written to the host filesystem, not the device
+
+---
+
 ## Summary
 
 | Phase | Steps | Focus | Deliverable |
