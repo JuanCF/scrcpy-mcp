@@ -1519,12 +1519,12 @@ export async function startSession(
   }
 
   let session: ScrcpySession | null = null
+  let audioSocket: net.Socket | null = null
   try {
     // In forward tunnel mode the server accepts sockets in order:
     // video, then audio, then control. It only sends device metadata AFTER all
     // sockets have been accepted. So we must connect every requested socket
     // before attempting to read the metadata from the video socket.
-    let audioSocket: net.Socket | null = null
     if (options.audio) {
       let lastAudioError: Error | null = null
       const audioConnectDeadline = Date.now() + 5000

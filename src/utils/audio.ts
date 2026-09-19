@@ -114,7 +114,7 @@ export function stopAudioHub(serial: string): void {
   hubs.delete(serial)
 }
 
-interface PlaybackSink extends AudioSink {
+export interface PlaybackSink extends AudioSink {
   process: ChildProcess
 }
 
@@ -174,6 +174,7 @@ export function createPlaybackSink(serial: string): PlaybackSink {
 
 export interface RecordingSink extends AudioSink {
   outputPath: string
+  format: "wav" | "opus"
   closed: Promise<void>
   killed: boolean
 }
@@ -235,6 +236,7 @@ export function createRecordingSink(
   return {
     id: "recording",
     outputPath,
+    format,
     get killed() { return killed },
     closed,
     write: (chunk: Buffer) => {

@@ -8,11 +8,12 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 
 ## Features
 
-- **36 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, and video streaming
+- **40 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, video streaming, and audio streaming/recording
 - **scrcpy-first**: uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots (~33ms)
 - **ADB fallback**: every tool works without scrcpy — slower but always available
 - **Image-returning screenshots**: the AI actually sees the screen, not just a file path
 - **UI element finding**: `ui_find_element` returns tap coordinates so the AI can act on what it sees
+- **Audio streaming & recording**: stream device audio to host speakers (`start_audio_stream`) or capture to `.wav`/`.opus` (`audio_record_start`)
 - **Clipboard that works on Android 10+**: scrcpy bypasses the restrictions that break ADB-only solutions
 
 ## Prerequisites
@@ -23,14 +24,15 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 |-------------|---------|--------|
 | **Node.js 24+** | [nodejs.org](https://nodejs.org) or `nvm install` (uses [`.nvmrc`](.nvmrc)) | `node --version` |
 | **ADB** (Android Platform Tools) | [developer.android.com/tools/releases/platform-tools](https://developer.android.com/tools/releases/platform-tools) | `adb version` |
-| **Android device** with USB debugging | Settings → Developer Options → USB Debugging | `adb devices` |
+| **Android device** with USB debugging (Android 11+ for audio) | Settings → Developer Options → USB Debugging | `adb devices` |
 
 ### Optional (for enhanced performance)
 
 | Requirement | Install | Benefit |
 |-------------|---------|---------|
 | **scrcpy** | [github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy/releases) | 10-50x faster input, ~33ms screenshots |
-| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy video stream decoding |
+| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy video stream decoding and audio recording |
+| **ffplay** | Usually packaged with ffmpeg | Required for audio playback and the MJPEG viewer window |
 
 ### Device setup
 
@@ -166,10 +168,22 @@ If you need to configure custom options (such as pointing to a non-standard `scr
 
 | Tool | Description |
 |------|-------------|
-| `start_video_stream` | Start an HTTP MJPEG video stream and open an ffplay viewer window. Auto-starts a scrcpy session if needed. |
+| `start_video_stream` | Start an HTTP MJPEG video stream and open a viewer window (ffplay). Auto-starts a scrcpy session if needed. |
 | `stop_video_stream` | Stop the video stream and close the viewer window. |
 
+### Audio Streaming & Recording
+
+> **Heads up:** Audio capture is **opt-in** and requires **Android 11+**. The default source `output` uses `REMOTE_SUBMIX`, which **mutes the device's own speakers** while capturing — the audio is moved to the host, not copied. Use `audioSource: "playback"` with `audioDup: true` (Android 13+) to keep the device audible. Recordings are saved on the **host** filesystem.
+
+| Tool | Description |
+|------|-------------|
+| `start_audio_stream` | Stream device audio to the host's speakers via ffplay. Restarts the scrcpy session if it was started without audio. |
+| `stop_audio_stream` | Stop streaming audio to the host. |
+| `audio_record_start` | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. |
+| `audio_record_stop` | Stop the recording and finalise the host-side file. |
+
 ### Device Management
+
 
 | Tool | Description |
 |------|-------------|

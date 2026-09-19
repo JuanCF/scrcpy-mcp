@@ -13,6 +13,14 @@ export function registerSessionTools(server: McpServer): void {
         serial: z.string().optional().describe("Device serial number"),
         maxSize: z.number().int().positive().optional().default(1024).describe("Max screen dimension in pixels (default 1024)"),
         maxFps: z.number().int().positive().optional().default(30).describe("Max frames per second (default 30)"),
+        audio: z.boolean().optional().default(false).describe("Enable audio capture (opt-in; default false). The default source output mutes the device speakers while capturing."),
+        audioSource: z.enum([
+          "output", "playback", "mic", "mic-unprocessed", "mic-camcorder",
+          "mic-voice-recognition", "mic-voice-communication",
+          "voice-call", "voice-call-uplink", "voice-call-downlink",
+          "voice-performance",
+        ]).optional().default("output").describe("Audio source"),
+        audioDup: z.boolean().optional().default(false).describe("Keep device playback audible when using playback source (Android 13+)"),
       },
       outputSchema: {
         status: z.string().describe("Session status (e.g. 'connected')"),
@@ -22,6 +30,7 @@ export function registerSessionTools(server: McpServer): void {
           height: z.number().int().describe("Native display height"),
         }).describe("Native display resolution — tap/swipe use these native coordinates, matching ui_dump / ui_find_element bounds directly (no scaling)"),
         videoAvailable: z.boolean().describe("Whether the scrcpy video stream is up. When false, the session still works for input/clipboard but screenshots fall back to adb screencap."),
+        audioAvailable: z.boolean().describe("Whether audio capture is active. When false, audio was unavailable (Android < 11 or capture failure)."),
         message: z.string().describe("Human-readable status message"),
       },
       annotations: {
@@ -32,15 +41,16 @@ export function registerSessionTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ serial, maxSize, maxFps }) => {
+    async ({ serial, maxSize, maxFps, audio, audioSource, audioDup }) => {
       try {
         const s = await resolveSerial(serial)
-        const session = await startSession(s, { maxSize, maxFps })
+        const session = await startSession(s, { maxSize, maxFps, audio, audioSource, audioDup })
         const structured = {
           status: "connected",
           serial: s,
           screenSize: session.screenSize,
           videoAvailable: session.videoAvailable,
+          audioAvailable: session.audioAvailable,
           message: session.videoAvailable
             ? "scrcpy session active. Input and screenshots will use the fast path."
             : "scrcpy session active for input, but the video stream is unavailable on this device; screenshots will fall back to adb screencap.",
