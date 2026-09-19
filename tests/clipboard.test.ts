@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest"
 import {
   parseServiceCallParcel,
-  parcelExceptionMessage,
-  parcelString,
+  parcelException,
+  formatParcelException,
 } from "../src/tools/clipboard.js"
 
 // Verbatim output of `service call clipboard 2` on a Samsung SM-S918B
@@ -37,51 +37,54 @@ describe("parseServiceCallParcel", () => {
   })
 })
 
-describe("parcelExceptionMessage", () => {
+describe("parcelException", () => {
   // Regression: the old hex strategy matched the 0x00000000 address label and
   // decoded it into four NUL bytes, so clipboard_get answered a refused read
   // with the content "\0\0\0\0" and source "adb" instead of an error.
   it("reports the exception a refused read carries", () => {
     const parcel = parseServiceCallParcel(refusedDump)!
 
-    expect(parcelExceptionMessage(parcel)).toBe("No items (code -3)")
+    expect(parcelException(parcel)).toEqual({ code: -3, message: "No items" })
   })
 
   it("returns null for a success parcel", () => {
     const parcel = Buffer.alloc(8)
     parcel.writeInt32LE(0, 0)
 
-    expect(parcelExceptionMessage(parcel)).toBeNull()
+    expect(parcelException(parcel)).toBeNull()
   })
 
-  it("falls back to the bare code when no message follows", () => {
+  it("reports the bare code when no message follows", () => {
     const parcel = Buffer.alloc(4)
     parcel.writeInt32LE(-3, 0)
 
-    expect(parcelExceptionMessage(parcel)).toBe("code -3")
+    expect(parcelException(parcel)).toEqual({ code: -3, message: null })
   })
 })
 
-describe("parcelString", () => {
-  it("decodes a length-prefixed UTF-16LE string after the status word", () => {
-    const text = "clipboard-probe"
-    const parcel = Buffer.alloc(8 + text.length * 2)
-    parcel.writeInt32LE(0, 0)
-    parcel.writeInt32LE(text.length, 4)
-    parcel.write(text, 8, "utf16le")
-
-    expect(parcelString(parcel)).toBe(text)
+describe("formatParcelException", () => {
+  it("renders the message and the code", () => {
+    expect(formatParcelException({ code: -3, message: "No items" })).toBe("No items (code -3)")
   })
 
-  it("refuses to decode an exception parcel", () => {
-    expect(parcelString(parseServiceCallParcel(refusedDump)!)).toBeNull()
+  it("renders the code alone when there is no message", () => {
+    expect(formatParcelException({ code: -3, message: null })).toBe("code -3")
   })
+})
 
-  it("refuses a length that overruns the parcel", () => {
-    const parcel = Buffer.alloc(12)
-    parcel.writeInt32LE(0, 0)
-    parcel.writeInt32LE(99, 4)
+describe("a permitted read", () => {
+  // `service call clipboard 2` is IClipboard.getPrimaryClip, which returns a
+  // nullable ClipData — a presence marker, then a ClipDescription (label, MIME
+  // array, PersistableBundle, timestamp, version-dependent flags), then the
+  // items. Reading offset 4 as a string length would decode that marker's "1"
+  // as a one-character string and hand back the first two bytes of the
+  // ClipDescription as clipboard text, so nothing is decoded off the parcel.
+  it("carries no exception, so the tool does not report a refusal", () => {
+    const clipData = Buffer.alloc(16)
+    clipData.writeInt32LE(0, 0) // status: no exception
+    clipData.writeInt32LE(1, 4) // ClipData present
+    clipData.writeInt32LE(-1, 8) // ClipDescription label: null CharSequence
 
-    expect(parcelString(parcel)).toBeNull()
+    expect(parcelException(clipData)).toBeNull()
   })
 })

@@ -40,6 +40,12 @@ export function parseServiceCallParcel(output: string): Buffer | null {
   return buf
 }
 
+export interface ParcelException {
+  code: number
+  /** The UTF-16LE message following the status word, when the parcel carries one. */
+  message: string | null
+}
+
 /**
  * Read the exception a parcel carries, or null when it holds a normal reply.
  *
@@ -48,7 +54,7 @@ export function parseServiceCallParcel(output: string): Buffer | null {
  * answers a shell-UID read with -3 / "No items", because since Android 10 only
  * the foreground app or default IME may read the clipboard.
  */
-export function parcelExceptionMessage(parcel: Buffer): string | null {
+export function parcelException(parcel: Buffer): ParcelException | null {
   if (parcel.length < 4) return null
 
   const code = parcel.readInt32LE(0)
@@ -57,13 +63,26 @@ export function parcelExceptionMessage(parcel: Buffer): string | null {
   if (parcel.length >= 8) {
     const length = parcel.readInt32LE(4)
     if (length > 0 && 8 + length * 2 <= parcel.length) {
-      return `${parcel.subarray(8, 8 + length * 2).toString("utf16le")} (code ${code})`
+      return { code, message: parcel.subarray(8, 8 + length * 2).toString("utf16le") }
     }
   }
-  return `code ${code}`
+  return { code, message: null }
 }
 
-async function getClipboardViaAdb(serial: string): Promise<string | null> {
+export function formatParcelException({ code, message }: ParcelException): string {
+  return message ? `${message} (code ${code})` : `code ${code}`
+}
+
+/** Machine-readable reason attached to a clipboard_get error the service refused. */
+export const CLIPBOARD_READ_REFUSED = "clipboard_read_refused"
+
+interface AdbClipboardRead {
+  content: string | null
+  /** Set when the clipboard service itself refused the read. */
+  refusal?: ParcelException
+}
+
+async function getClipboardViaAdb(serial: string): Promise<AdbClipboardRead> {
   try {
     const sdkStr = await getDeviceProperty(serial, "ro.build.version.sdk")
     const sdkLevel = parseInt(sdkStr, 10)
@@ -79,24 +98,28 @@ async function getClipboardViaAdb(serial: string): Promise<string | null> {
       if (failed) {
         console.error(`[clipboard_get] cmd clipboard get unavailable: ${stderr.trim()}`)
       } else if (result && !result.includes("not found") && !result.includes("Error")) {
-        return result
+        return { content: result }
       }
     }
 
     const serviceResult = await execAdbShell(serial, "service call clipboard 2")
     if (serviceResult) {
-      // An exception parcel carries no content at all; returning null lets the
-      // tool report a real error instead of inventing a clipboard value.
+      // An exception parcel carries no content at all; reporting the refusal
+      // lets the tool return a real error instead of inventing a clipboard
+      // value, and lets callers tell a refusal from a transport failure.
       const parcel = parseServiceCallParcel(serviceResult)
       if (parcel) {
-        const exception = parcelExceptionMessage(parcel)
-        if (exception) {
-          console.error(`[clipboard_get] clipboard service refused the read: ${exception}`)
-          return null
+        const refusal = parcelException(parcel)
+        if (refusal) {
+          console.error(
+            `[clipboard_get] clipboard service refused the read: ${formatParcelException(refusal)}`
+          )
+          return { content: null, refusal }
         }
       }
 
-      // Try multiple parsing strategies for clipboard service output
+      // Legacy text shapes, for builds whose clipboard service answers in
+      // plain text rather than a parcel dump.
       let text: string | null = null
 
       // Strategy 1: Original pattern - result=0...) followed by content
@@ -108,46 +131,40 @@ async function getClipboardViaAdb(serial: string): Promise<string | null> {
       // Strategy 2: Look for quoted strings (common in service dumps)
       if (!text) {
         match = serviceResult.match(/"([^"]*)"/)
-        if (match && match[1]) {
+        if (match && match[1] !== undefined) {
           text = match[1]
         }
       }
 
-      // Strategy 3: the reply is a successful parcel — decode the UTF-16LE
-      // string that follows the status word, skipping the address labels.
-      if (!text && parcel) {
-        text = parcelString(parcel) ?? null
-      }
-
-      if (text) {
+      // An empty clipboard is content, not a failure — hence !== null.
+      if (text !== null) {
         // Normalize escape sequences (octal \ddd -> char)
         text = text.replace(/\\(\d{3})/g, (_, oct) =>
           String.fromCharCode(parseInt(oct, 8))
         )
-        return text
+        return { content: text }
       }
 
-      console.error(`[clipboard_get] Could not parse service result: ${serviceResult}`)
+      if (parcel) {
+        // A permitted read answers transaction 2 with IClipboard.getPrimaryClip's
+        // return value: a *nullable ClipData*, not a bare string. The reply is a
+        // presence marker followed by a ClipDescription (label, MIME array,
+        // PersistableBundle, timestamp, flags that differ per platform version)
+        // and only then the items, so the text cannot be lifted off a fixed
+        // offset — decoding the marker as a string length yields garbage.
+        // `cmd clipboard get` and the scrcpy control path cover this case.
+        console.error(
+          "[clipboard_get] clipboard service returned a ClipData parcel, which is not decoded here; use a scrcpy session"
+        )
+      } else {
+        console.error(`[clipboard_get] Could not parse service result: ${serviceResult}`)
+      }
     }
 
-    return null
+    return { content: null }
   } catch {
-    return null
+    return { content: null }
   }
-}
-
-/**
- * Decode the first length-prefixed UTF-16LE string after a parcel's status
- * word. Returns null when the parcel holds no readable string.
- */
-export function parcelString(parcel: Buffer): string | null {
-  if (parcel.length < 8) return null
-  if (parcel.readInt32LE(0) !== 0) return null
-
-  const length = parcel.readInt32LE(4)
-  if (length <= 0 || 8 + length * 2 > parcel.length) return null
-
-  return parcel.subarray(8, 8 + length * 2).toString("utf16le")
 }
 
 async function setClipboardViaAdb(serial: string, text: string): Promise<boolean> {
@@ -213,22 +230,33 @@ export function registerClipboardTools(server: McpServer): void {
           }
         }
 
-        const content = await getClipboardViaAdb(s)
-        if (content !== null) {
+        const adb = await getClipboardViaAdb(s)
+        if (adb.content !== null) {
+          const structured = { content: adb.content, source: "adb" }
           return {
-            content: [{ type: "text", text: JSON.stringify({ content, source: "adb" }) }],
-            structuredContent: { content, source: "adb" },
+            content: [{ type: "text", text: JSON.stringify(structured) }],
+            structuredContent: structured,
           }
         }
 
+        // A refusal by the clipboard service is a permanent property of the
+        // device, not a transport failure, so it carries its own reason and
+        // Binder code — callers (and the integration suite) can tell the two
+        // apart instead of treating every error the same.
+        const failure = adb.refusal
+          ? {
+            error: true,
+            reason: CLIPBOARD_READ_REFUSED,
+            code: adb.refusal.code,
+            message: `The device clipboard service refused the read: ${formatParcelException(adb.refusal)}. Since Android 10 the clipboard is readable only by the foreground app or the default IME, and some vendor builds refuse it even over scrcpy.`,
+          }
+          : {
+            error: true,
+            message: "Could not retrieve clipboard content. On Android 10+ the clipboard is readable only by the foreground app or the default IME; start a scrcpy session, and note that some vendor builds refuse the read entirely.",
+          }
+
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: true,
-              message: "Could not retrieve clipboard content. On Android 10+ the clipboard is readable only by the foreground app or the default IME; start a scrcpy session, and note that some vendor builds refuse the read entirely.",
-            }),
-          }],
+          content: [{ type: "text", text: JSON.stringify(failure) }],
           isError: true as const,
         }
       } catch (error) {
