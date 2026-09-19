@@ -1,11 +1,67 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
-import { execAdbShell, resolveSerial, getDeviceProperty } from "../utils/adb.js"
+import { execAdb, execAdbShell, resolveSerial, getDeviceProperty } from "../utils/adb.js"
 import {
   hasActiveSession,
   getClipboardViaScrcpy,
   setClipboardViaScrcpy,
 } from "../utils/scrcpy.js"
+
+/**
+ * Extract the payload bytes of a `service call` parcel dump.
+ *
+ * Each line interleaves an address label, four little-endian words and an
+ * ASCII gutter:
+ *
+ *   0x00000000: fffffffd 00000008 006f004e 00690020 '........N.o. .i.'
+ *
+ * Only the middle columns are payload. The old hex strategy ran a bare
+ * /0x([0-9a-f]+)/ over the whole dump, matched the *address label* on the
+ * first line, and decoded 0x00000000 into four NUL bytes — so a clipboard the
+ * device refused to hand over was reported as the content "\0\0\0\0".
+ */
+export function parseServiceCallParcel(output: string): Buffer | null {
+  const words: number[] = []
+
+  for (const line of output.split("\n")) {
+    const match = line.match(/^\s*0x[0-9a-f]{8}:\s*((?:[0-9a-f]{8}(?:\s+|$))+)/i)
+    if (!match) continue
+    for (const word of match[1].trim().split(/\s+/)) {
+      words.push(parseInt(word, 16))
+    }
+  }
+
+  if (words.length === 0) return null
+
+  // The dump prints each word big-endian, but the bytes sit in memory
+  // little-endian: 006f004e with gutter 'N.o.' is 4e 00 6f 00, UTF-16LE "No".
+  const buf = Buffer.alloc(words.length * 4)
+  words.forEach((word, i) => buf.writeUInt32LE(word >>> 0, i * 4))
+  return buf
+}
+
+/**
+ * Read the exception a parcel carries, or null when it holds a normal reply.
+ *
+ * A Binder reply parcel opens with a status word: 0 means success, anything
+ * else is an exception followed by a UTF-16LE message. The clipboard service
+ * answers a shell-UID read with -3 / "No items", because since Android 10 only
+ * the foreground app or default IME may read the clipboard.
+ */
+export function parcelExceptionMessage(parcel: Buffer): string | null {
+  if (parcel.length < 4) return null
+
+  const code = parcel.readInt32LE(0)
+  if (code === 0) return null
+
+  if (parcel.length >= 8) {
+    const length = parcel.readInt32LE(4)
+    if (length > 0 && 8 + length * 2 <= parcel.length) {
+      return `${parcel.subarray(8, 8 + length * 2).toString("utf16le")} (code ${code})`
+    }
+  }
+  return `code ${code}`
+}
 
 async function getClipboardViaAdb(serial: string): Promise<string | null> {
   try {
@@ -13,14 +69,33 @@ async function getClipboardViaAdb(serial: string): Promise<string | null> {
     const sdkLevel = parseInt(sdkStr, 10)
 
     if (!isNaN(sdkLevel) && sdkLevel >= 31) {
-      const result = await execAdbShell(serial, "cmd clipboard get")
-      if (result && !result.includes("not found") && !result.includes("Error")) {
-        return result.trim()
+      // Not execAdbShell: a device without this shell command prints
+      // "No shell command implementation." to *stderr* and still exits 0, so
+      // reading stdout alone yields "" and silently falls through to the
+      // parcel path. Check stderr so the unsupported case is visible.
+      const { stdout, stderr } = await execAdb(["-s", serial, "shell", "cmd clipboard get"])
+      const result = stdout.trim()
+      const failed = stderr.trim().length > 0
+      if (failed) {
+        console.error(`[clipboard_get] cmd clipboard get unavailable: ${stderr.trim()}`)
+      } else if (result && !result.includes("not found") && !result.includes("Error")) {
+        return result
       }
     }
 
     const serviceResult = await execAdbShell(serial, "service call clipboard 2")
     if (serviceResult) {
+      // An exception parcel carries no content at all; returning null lets the
+      // tool report a real error instead of inventing a clipboard value.
+      const parcel = parseServiceCallParcel(serviceResult)
+      if (parcel) {
+        const exception = parcelExceptionMessage(parcel)
+        if (exception) {
+          console.error(`[clipboard_get] clipboard service refused the read: ${exception}`)
+          return null
+        }
+      }
+
       // Try multiple parsing strategies for clipboard service output
       let text: string | null = null
 
@@ -38,17 +113,10 @@ async function getClipboardViaAdb(serial: string): Promise<string | null> {
         }
       }
 
-      // Strategy 3: Look for hex string patterns (e.g., 0x1234 or hex array)
-      if (!text) {
-        match = serviceResult.match(/0x([0-9a-fA-F]+)/)
-        if (match && match[1]) {
-          try {
-            const hex = match[1]
-            text = Buffer.from(hex, "hex").toString("utf8")
-          } catch {
-            // Fall through to null
-          }
-        }
+      // Strategy 3: the reply is a successful parcel — decode the UTF-16LE
+      // string that follows the status word, skipping the address labels.
+      if (!text && parcel) {
+        text = parcelString(parcel) ?? null
       }
 
       if (text) {
@@ -66,6 +134,20 @@ async function getClipboardViaAdb(serial: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * Decode the first length-prefixed UTF-16LE string after a parcel's status
+ * word. Returns null when the parcel holds no readable string.
+ */
+export function parcelString(parcel: Buffer): string | null {
+  if (parcel.length < 8) return null
+  if (parcel.readInt32LE(0) !== 0) return null
+
+  const length = parcel.readInt32LE(4)
+  if (length <= 0 || 8 + length * 2 > parcel.length) return null
+
+  return parcel.subarray(8, 8 + length * 2).toString("utf16le")
 }
 
 async function setClipboardViaAdb(serial: string, text: string): Promise<boolean> {
@@ -144,7 +226,7 @@ export function registerClipboardTools(server: McpServer): void {
             type: "text",
             text: JSON.stringify({
               error: true,
-              message: "Could not retrieve clipboard content. On Android 10+, start a scrcpy session for reliable clipboard access.",
+              message: "Could not retrieve clipboard content. On Android 10+ the clipboard is readable only by the foreground app or the default IME; start a scrcpy session, and note that some vendor builds refuse the read entirely.",
             }),
           }],
           isError: true as const,
