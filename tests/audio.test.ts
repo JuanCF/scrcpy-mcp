@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { EventEmitter } from "events"
 import * as net from "net"
+import * as os from "os"
+import * as fs from "fs"
+import * as path from "path"
 import {
   parseAudioHeader,
   buildServerArgs,
@@ -15,6 +18,7 @@ import {
   AUDIO_CODEC_ID_FLAC,
   AUDIO_STREAM_DISABLED,
   AUDIO_STREAM_CONFIG_ERROR,
+  AUDIO_SAMPLE_RATE,
 } from "../src/utils/constants.js"
 import {
   startAudioHub,
@@ -24,7 +28,9 @@ import {
   stopAudioHub,
   onAudioHubStopped,
   pcmDurationSeconds,
+  createRecordingSink,
 } from "../src/utils/audio.js"
+import { probeBinary } from "../src/utils/ffmpeg.js"
 
 describe("parseAudioHeader", () => {
   function headerBytes(id: number): Buffer {
@@ -340,5 +346,40 @@ describe("header reads leave the socket paused", () => {
     } finally {
       close()
     }
+  })
+})
+
+describe("createRecordingSink failure reporting", () => {
+  const hasFfmpeg = probeBinary("ffmpeg") !== null
+
+  // ffmpeg spawns fine and only fails later, so audio_record_start cannot see
+  // the error; the sink has to keep it so audio_record_stop can report it.
+  it("retains a nonzero ffmpeg exit", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createRecordingSink(
+      "test-serial",
+      "/nonexistent-scrcpy-mcp-dir/out.wav"
+    )
+    await sink.ready
+    sink.write(Buffer.alloc(4096))
+    sink.end()
+    await sink.closed
+
+    expect(sink.failure).toMatch(/ffmpeg/)
+  })
+
+  it("reports no failure for a clean run", async () => {
+    if (!hasFfmpeg) return
+
+    const outputPath = path.join(os.tmpdir(), `scrcpy-mcp-test-${Date.now()}.wav`)
+    const sink = createRecordingSink("test-serial", outputPath)
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.1)))
+    sink.end()
+    await sink.closed
+
+    expect(sink.failure).toBeNull()
+    fs.rmSync(outputPath, { force: true })
   })
 })

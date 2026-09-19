@@ -13,4 +13,5 @@ opencode.json
 *.mcpb
 # Audio/screen recordings produced by the MCP tools
 *.wav
+*.opus
 *.mp4

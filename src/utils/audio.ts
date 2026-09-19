@@ -246,6 +246,12 @@ export interface RecordingSink extends AudioSink {
   pcmBytes: number
   /** Settles once ffmpeg has actually spawned; rejects if the spawn fails. */
   ready: Promise<void>
+  /**
+   * Terminal ffmpeg failure (process error or nonzero exit), or null when the
+   * encoder finished cleanly. A force-kill from end() is not a failure — the
+   * container is still finalised on a best-effort basis and `killed` reports it.
+   */
+  failure: string | null
 }
 
 export function createRecordingSink(
@@ -277,6 +283,7 @@ export function createRecordingSink(
   let finalised = false
   let killed = false
   let pcmBytes = 0
+  let failure: string | null = null
 
   const settleClosed = () => {
     if (!finalised) {
@@ -294,6 +301,7 @@ export function createRecordingSink(
   })
   proc.on("error", (err) => {
     console.error(`[audio] ffmpeg process error for ${serial}:`, err.message)
+    failure ??= `ffmpeg process error: ${err.message}`
     settleClosed()
   })
 
@@ -302,12 +310,11 @@ export function createRecordingSink(
   })
 
   proc.on("exit", (code) => {
-    if (!finalised) {
-      if (code !== 0 && code !== null) {
-        console.error(`[audio] ffmpeg exited with code ${code} for ${serial}`)
-      }
-      settleClosed()
+    if (code !== 0 && code !== null) {
+      console.error(`[audio] ffmpeg exited with code ${code} for ${serial}`)
+      failure ??= `ffmpeg exited with code ${code}`
     }
+    settleClosed()
   })
 
   const stdin = proc.stdin
@@ -334,6 +341,7 @@ export function createRecordingSink(
     format,
     get killed() { return killed },
     get pcmBytes() { return pcmBytes },
+    get failure() { return failure },
     closed,
     ready,
     write: (chunk: Buffer) => {

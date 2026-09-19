@@ -287,11 +287,31 @@ export function registerAudioTools(server: McpServer): void {
         await sink.closed
 
         let sizeBytes = 0
+        let statError: string | null = null
         try {
           const stat = await fs.promises.stat(sink.outputPath)
           sizeBytes = stat.size
         } catch (err) {
-          console.error(`[audio] Could not stat recording ${sink.outputPath}:`, (err as Error).message)
+          statError = (err as Error).message
+          console.error(`[audio] Could not stat recording ${sink.outputPath}:`, statError)
+        }
+
+        // ffmpeg only spawns synchronously at start time; a codec or output
+        // failure surfaces later as a nonzero exit, so report it here rather
+        // than claiming a recording that was never written.
+        if (sink.failure || statError) {
+          const reason = sink.failure ?? `output file is unreadable: ${statError}`
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                localPath: sink.outputPath,
+                message: `Audio recording failed: ${reason}.`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
         }
 
         // Duration comes from the raw PCM bytes ffmpeg actually received —
