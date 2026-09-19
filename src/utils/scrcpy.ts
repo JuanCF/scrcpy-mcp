@@ -1505,6 +1505,48 @@ const startDeviceMessageHandler = (session: ScrcpySession): void => {
   })
 }
 
+// Mirrors the buildServerArgs defaults, so a session started with partial
+// options compares equal to a request that spells the same values out.
+const SESSION_OPTION_DEFAULTS: ScrcpySessionOptions = {
+  maxSize: 1024,
+  maxFps: 30,
+  videoBitRate: 8000000,
+  audio: false,
+  audioSource: "output",
+  audioDup: false,
+  stayAwake: false,
+}
+
+// An option left undefined in the request is "don't care" and never forces a
+// restart — that's what lets startSession(s) reuse whatever is running.
+function sessionOptionsMatch(
+  current: ScrcpySessionOptions,
+  requested: ScrcpySessionOptions
+): boolean {
+  const keys = [
+    "maxSize", "maxFps", "videoBitRate", "audio", "stayAwake", "screenOffTimeout",
+  ] as const
+  for (const key of keys) {
+    const want = requested[key]
+    if (want !== undefined && (current[key] ?? SESSION_OPTION_DEFAULTS[key]) !== want) {
+      return false
+    }
+  }
+
+  // audioSource/audioDup are inert unless audio is on for both sides;
+  // comparing them otherwise would restart sessions over settings that
+  // change nothing.
+  if ((requested.audio ?? false) && (current.audio ?? false)) {
+    for (const key of ["audioSource", "audioDup"] as const) {
+      const want = requested[key]
+      if (want !== undefined && (current[key] ?? SESSION_OPTION_DEFAULTS[key]) !== want) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
 export async function startSession(
   serial: string,
   options: ScrcpySessionOptions = {}
@@ -1519,7 +1561,14 @@ export async function startSession(
   const s = await resolveSerial(serial)
 
   if (hasActiveSession(s)) {
-    return sessions.get(s)!
+    const existing = sessions.get(s)!
+    if (sessionOptionsMatch(existing.options, options)) {
+      return existing
+    }
+    // The caller asked for something the running session does not have (e.g.
+    // audio on a video-only session, or a different stayAwake) — restart so
+    // the requested options actually take effect.
+    await stopSession(s)
   }
 
   await pushScrcpyServer(s, serverPath)

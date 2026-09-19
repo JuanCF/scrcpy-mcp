@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest"
 import { resolveSerial, execAdbShell } from "../../src/utils/adb.js"
-import { callTool, parseResult, stopSessionOrFail } from "./mcp-client.js"
+import { callTool, stopSessionOrFail } from "./mcp-client.js"
 
 describe("audio tools", () => {
   let serial: string | null = null
@@ -25,27 +25,45 @@ describe("audio tools", () => {
 
     await stopSessionOrFail()
 
-    const startResult = await callTool("audio_record_start", { serial })
-    const startData = parseResult(startResult) as {
-      status: string
-      localPath: string
-      sessionRestarted?: boolean
+    // A failed assertion must not strand the ffmpeg child or the scrcpy
+    // session — later tests would inherit both.
+    let recordingStarted = false
+    try {
+      const startResult = await callTool("audio_record_start", { serial })
+      expect(startResult.isError).toBeFalsy()
+      const startData = startResult.structuredContent as {
+        status: string
+        localPath: string
+        format: string
+        deviceMuted: boolean
+        sessionRestarted: boolean
+        message: string
+      }
+      expect(startData, "audio_record_start returned no structuredContent").toBeDefined()
+      expect(startData.status).toBe("recording")
+      expect(startData.sessionRestarted).toBe(true)
+      recordingStarted = true
+
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+
+      const stopResult = await callTool("audio_record_stop", { serial })
+      expect(stopResult.isError).toBeFalsy()
+      const stopData = stopResult.structuredContent as {
+        status: string
+        localPath: string
+        sizeBytes: number
+        durationSeconds: number
+        message: string
+      }
+      expect(stopData, "audio_record_stop returned no structuredContent").toBeDefined()
+      expect(stopData.status).toBe("stopped")
+      expect(stopData.sizeBytes).toBeGreaterThan(0)
+      recordingStarted = false
+    } finally {
+      if (recordingStarted) {
+        await callTool("audio_record_stop", { serial })
+      }
+      await stopSessionOrFail()
     }
-    expect(startData.status).toBe("recording")
-    expect(startData.sessionRestarted).toBe(true)
-
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    const stopResult = await callTool("audio_record_stop", { serial })
-    const stopData = parseResult(stopResult) as {
-      status: string
-      localPath: string
-      sizeBytes: number
-      durationSeconds: number
-    }
-    expect(stopData.status).toBe("stopped")
-    expect(stopData.sizeBytes).toBeGreaterThan(0)
-
-    await stopSessionOrFail()
   }, 60000)
 })

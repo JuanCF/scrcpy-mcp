@@ -437,7 +437,7 @@ All input tools use **scrcpy's control protocol natively** when a session is act
 ### Tool count summary
 
 | Category | scrcpy native | ADB only | Total |
-|---|---|---|---|---|---|
+|---|---|---|---|
 | Session | — | — | 2 |
 | Device Management | 4 (screen on/off, rotate, panels) | 2 (list, info) | 8* |
 | Vision | 1 (screenshot via stream) | 2 (record start/stop) | 3 |

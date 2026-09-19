@@ -4,6 +4,10 @@ import { probeBinary } from "../src/utils/ffmpeg.js"
 
 const originalFfplayPath = process.env.FFPLAY_PATH
 
+// A command guaranteed to be on PATH for the platform: `sh` does not exist on
+// a stock Windows install, where `where.exe` is the always-present equivalent.
+const pathCommand = process.platform === "win32" ? "where.exe" : "sh"
+
 afterEach(() => {
   if (originalFfplayPath === undefined) {
     delete process.env.FFPLAY_PATH
@@ -17,7 +21,7 @@ describe("probeBinary", () => {
   // resolves against the process cwd. A host with ffplay installed on PATH was
   // reported as "ffplay was not found", making start_audio_stream unusable.
   it("resolves a bare command name through PATH", () => {
-    process.env.FFPLAY_PATH = "sh"
+    process.env.FFPLAY_PATH = pathCommand
     const resolved = probeBinary("ffplay")
     expect(resolved).not.toBeNull()
     expect(path.isAbsolute(resolved!)).toBe(true)
@@ -33,7 +37,7 @@ describe("probeBinary", () => {
   })
 
   it("finds a binary that is on PATH by name", () => {
-    const resolved = probeBinary("sh")
+    const resolved = probeBinary(pathCommand)
     expect(resolved).not.toBeNull()
     expect(path.isAbsolute(resolved!)).toBe(true)
   })

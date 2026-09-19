@@ -22,7 +22,8 @@ import {
   detachAudioSink,
   listAudioSinks,
   stopAudioHub,
-  wavDurationSeconds,
+  onAudioHubStopped,
+  pcmDurationSeconds,
 } from "../src/utils/audio.js"
 
 describe("parseAudioHeader", () => {
@@ -126,11 +127,10 @@ describe("AudioHub", () => {
   let socket: net.Socket
 
   beforeEach(() => {
-    socket = new EventEmitter() as net.Socket
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(socket as any).resume = vi.fn()
-    ;(socket as any).off = vi.fn()
-    ;(socket as any).on = socket.on.bind(socket)
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
   })
 
   afterEach(() => {
@@ -180,6 +180,48 @@ describe("AudioHub", () => {
     expect(listAudioSinks("test-device")).toEqual([])
   })
 
+  it("keeps the socket paused until the first sink attaches", () => {
+    startAudioHub("test-device", socket)
+    expect(socket.resume).not.toHaveBeenCalled()
+
+    attachAudioSink("test-device", {
+      id: "a",
+      write: () => {},
+      end: () => {},
+    })
+    expect(socket.resume).toHaveBeenCalledTimes(1)
+
+    attachAudioSink("test-device", {
+      id: "b",
+      write: () => {},
+      end: () => {},
+    })
+    expect(socket.resume).toHaveBeenCalledTimes(1)
+  })
+
+  it("flushes the header-overflow bytes into the first sink", () => {
+    const initial = Buffer.from("first-pcm")
+    const received: Buffer[] = []
+    startAudioHub("test-device", socket, initial)
+    expect(received).toEqual([])
+
+    attachAudioSink("test-device", {
+      id: "a",
+      write: (chunk) => received.push(chunk),
+      end: () => {},
+    })
+    expect(received).toEqual([initial])
+  })
+
+  it("notifies hub-stop listeners when the hub stops", () => {
+    const listener = vi.fn()
+    onAudioHubStopped(listener)
+    startAudioHub("test-device", socket)
+
+    stopAudioHub("test-device")
+    expect(listener).toHaveBeenCalledWith("test-device")
+  })
+
   it("detaches a throwing sink without disturbing others", () => {
     const received: Buffer[] = []
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {})
@@ -207,11 +249,11 @@ describe("AudioHub", () => {
 
 })
 
-describe("wavDurationSeconds", () => {
-  it("computes duration from byte count", () => {
+describe("pcmDurationSeconds", () => {
+  it("computes duration from raw PCM byte count", () => {
     // 48000 Hz, 2 channels, 2 bytes/sample -> 192000 bytes/sec
-    expect(wavDurationSeconds(192000)).toBe(1)
-    expect(wavDurationSeconds(96000)).toBe(0.5)
+    expect(pcmDurationSeconds(192000)).toBe(1)
+    expect(pcmDurationSeconds(96000)).toBe(0.5)
   })
 })
 

@@ -18,12 +18,22 @@ export interface AudioSink {
 interface HubEntry {
   socket: net.Socket
   sinks: Map<string, AudioSink>
+  // Bytes that arrived before the first sink attached (the audio header
+  // overflow). Flushed into the first sink so a recording starts with the
+  // very first PCM chunk instead of whatever happens to arrive next.
+  pending: Buffer[]
   onData: (chunk: Buffer) => void
   onError: (err: Error) => void
   onClose: () => void
 }
 
 const hubs = new Map<string, HubEntry>()
+
+const hubStopListeners = new Set<(serial: string) => void>()
+
+export function onAudioHubStopped(listener: (serial: string) => void): void {
+  hubStopListeners.add(listener)
+}
 
 export function startAudioHub(
   serial: string,
@@ -58,13 +68,17 @@ export function startAudioHub(
   socket.on("error", onError)
   socket.on("close", onClose)
 
-  hubs.set(serial, { socket, sinks, onData, onError, onClose })
-
+  const pending: Buffer[] = []
   if (initial && initial.length > 0) {
-    onData(initial)
+    pending.push(initial)
   }
 
-  socket.resume()
+  hubs.set(serial, { socket, sinks, pending, onData, onError, onClose })
+
+  // The socket stays paused until the first sink attaches: while paused the
+  // kernel buffers and TCP backpressure hold the stream, so no audio is lost
+  // and nothing grows unboundedly on the host. attachAudioSink flushes the
+  // pending bytes and resumes the flow.
 }
 
 export function attachAudioSink(serial: string, sink: AudioSink): boolean {
@@ -73,7 +87,15 @@ export function attachAudioSink(serial: string, sink: AudioSink): boolean {
     console.error(`[audio] No audio hub for ${serial}; cannot attach sink ${sink.id}`)
     return false
   }
+  const isFirst = hub.sinks.size === 0
   hub.sinks.set(sink.id, sink)
+  if (isFirst) {
+    for (const chunk of hub.pending) {
+      hub.onData(chunk)
+    }
+    hub.pending = []
+    hub.socket.resume()
+  }
   return true
 }
 
@@ -112,10 +134,23 @@ export function stopAudioHub(serial: string): void {
   }
   hub.sinks.clear()
   hubs.delete(serial)
+
+  // Tool-level bookkeeping (recordingSinks/playbackSinks in tools/audio.ts)
+  // tracks sinks of its own; without this notification those maps would keep
+  // stale entries for sinks the hub just ended.
+  for (const listener of hubStopListeners) {
+    try {
+      listener(serial)
+    } catch (err) {
+      console.error(`[audio] Hub-stop listener threw for ${serial}:`, err)
+    }
+  }
 }
 
 export interface PlaybackSink extends AudioSink {
   process: ChildProcess
+  /** Settles once ffplay has actually spawned; rejects if the spawn fails. */
+  ready: Promise<void>
 }
 
 export function createPlaybackSink(serial: string): PlaybackSink {
@@ -132,6 +167,17 @@ export function createPlaybackSink(serial: string): PlaybackSink {
     "-i", "pipe:0",
   ])
 
+  // A failed spawn (binary vanished between probeBinary and here, EACCES, …)
+  // emits "error" and never "exit"; without a listener that exception is
+  // uncaught. ready lets the caller report the failure instead of success.
+  const ready = new Promise<void>((resolve, reject) => {
+    proc.once("spawn", () => resolve())
+    proc.once("error", reject)
+  })
+  proc.on("error", (err) => {
+    console.error(`[audio] ffplay process error for ${serial}:`, err.message)
+  })
+
   proc.stderr?.on("data", (data: Buffer) => {
     console.error(`[audio] ffplay stderr for ${serial}:`, data.toString().trim())
   })
@@ -147,7 +193,14 @@ export function createPlaybackSink(serial: string): PlaybackSink {
   })
 
   const stdin = proc.stdin
+  // A stalled ffplay makes stdin.write() return false; honouring that by
+  // dropping audio until "drain" keeps a stuck child from growing the
+  // in-process buffer without bound. The shared socket is never paused.
+  let backpressured = false
   if (stdin) {
+    stdin.on("drain", () => {
+      backpressured = false
+    })
     stdin.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EPIPE") {
         console.error(`[audio] ffplay stdin EPIPE for ${serial}`)
@@ -160,9 +213,16 @@ export function createPlaybackSink(serial: string): PlaybackSink {
   return {
     id: "playback",
     process: proc,
+    ready,
     write: (chunk: Buffer) => {
+      if (backpressured) return
       if (stdin && !stdin.destroyed) {
-        try { stdin.write(chunk) } catch { /* EPIPE handled above */ }
+        try {
+          if (!stdin.write(chunk)) {
+            backpressured = true
+            console.error(`[audio] ffplay stdin backpressured for ${serial}; dropping audio until drain`)
+          }
+        } catch { /* EPIPE handled above */ }
       }
     },
     end: () => {
@@ -182,6 +242,10 @@ export interface RecordingSink extends AudioSink {
   format: "wav" | "opus"
   closed: Promise<void>
   killed: boolean
+  /** Raw PCM bytes delivered to ffmpeg — the basis for the duration report. */
+  pcmBytes: number
+  /** Settles once ffmpeg has actually spawned; rejects if the spawn fails. */
+  ready: Promise<void>
 }
 
 export function createRecordingSink(
@@ -212,6 +276,26 @@ export function createRecordingSink(
 
   let finalised = false
   let killed = false
+  let pcmBytes = 0
+
+  const settleClosed = () => {
+    if (!finalised) {
+      finalised = true
+      resolveClosed?.()
+    }
+  }
+
+  // A failed spawn emits "error" and may never emit "exit"; settle closed so
+  // audio_record_stop cannot hang waiting on a process that never ran, and
+  // let ready reject so the start tool reports the failure.
+  const ready = new Promise<void>((resolve, reject) => {
+    proc.once("spawn", () => resolve())
+    proc.once("error", reject)
+  })
+  proc.on("error", (err) => {
+    console.error(`[audio] ffmpeg process error for ${serial}:`, err.message)
+    settleClosed()
+  })
 
   proc.stderr?.on("data", (data: Buffer) => {
     console.error(`[audio] ffmpeg stderr for ${serial}:`, data.toString().trim())
@@ -219,16 +303,22 @@ export function createRecordingSink(
 
   proc.on("exit", (code) => {
     if (!finalised) {
-      finalised = true
       if (code !== 0 && code !== null) {
         console.error(`[audio] ffmpeg exited with code ${code} for ${serial}`)
       }
-      resolveClosed?.()
+      settleClosed()
     }
   })
 
   const stdin = proc.stdin
+  // Same backpressure contract as the playback sink: drop audio while the
+  // child is stalled rather than buffering unboundedly, and never pause the
+  // shared socket. Dropped chunks are not counted toward the duration.
+  let backpressured = false
   if (stdin) {
+    stdin.on("drain", () => {
+      backpressured = false
+    })
     stdin.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EPIPE") {
         console.error(`[audio] ffmpeg stdin EPIPE for ${serial}`)
@@ -243,10 +333,19 @@ export function createRecordingSink(
     outputPath,
     format,
     get killed() { return killed },
+    get pcmBytes() { return pcmBytes },
     closed,
+    ready,
     write: (chunk: Buffer) => {
+      if (backpressured) return
       if (stdin && !stdin.destroyed) {
-        try { stdin.write(chunk) } catch { /* EPIPE handled above */ }
+        try {
+          pcmBytes += chunk.length
+          if (!stdin.write(chunk)) {
+            backpressured = true
+            console.error(`[audio] ffmpeg stdin backpressured for ${serial}; dropping audio until drain`)
+          }
+        } catch { /* EPIPE handled above */ }
       }
     },
     end: () => {
@@ -268,9 +367,9 @@ export function createRecordingSink(
   }
 }
 
-export function wavDurationSeconds(sizeBytes: number): number {
+export function pcmDurationSeconds(pcmBytes: number): number {
   const bytesPerSecond = AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE
-  return bytesPerSecond === 0 ? 0 : sizeBytes / bytesPerSecond
+  return bytesPerSecond === 0 ? 0 : pcmBytes / bytesPerSecond
 }
 
 export function defaultRecordingPath(format: "wav" | "opus" = "wav"): string {

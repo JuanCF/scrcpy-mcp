@@ -23,7 +23,8 @@ import {
   createPlaybackSink,
   createRecordingSink,
   defaultRecordingPath,
-  wavDurationSeconds,
+  onAudioHubStopped,
+  pcmDurationSeconds,
   type RecordingSink,
   type PlaybackSink,
 } from "../utils/audio.js"
@@ -31,6 +32,14 @@ import { probeBinary } from "../utils/ffmpeg.js"
 
 const playbackSinks = new Map<string, PlaybackSink>()
 const recordingSinks = new Map<string, RecordingSink>()
+
+// stopAudioHub (via stop_session or an audio-session restart) ends every
+// attached sink; drop the tool-level entries with it so a later start tool
+// doesn't report "already active" over a dead sink.
+onAudioHubStopped((serial) => {
+  playbackSinks.delete(serial)
+  recordingSinks.delete(serial)
+})
 
 async function ensureAudioSession(
   serial: string,
@@ -40,7 +49,16 @@ async function ensureAudioSession(
   const session = getSession(s)
 
   if (session && session.audioAvailable) {
-    return { session, sessionRestarted: false }
+    // Reuse only when the capture settings match — otherwise the tool would
+    // report the requested source/muting state while the session keeps
+    // streaming whatever it was started with.
+    const sourceMatch =
+      (session.options.audioSource ?? "output") === (options.audioSource ?? "output")
+    const dupMatch =
+      (session.options.audioDup ?? false) === (options.audioDup ?? false)
+    if (sourceMatch && dupMatch) {
+      return { session, sessionRestarted: false }
+    }
   }
 
   const wasMjpegRunning = isMjpegServerRunning(s)
@@ -71,9 +89,10 @@ async function ensureAudioSession(
 }
 
 function deviceMuted(audioSource: AudioSourceName, audioDup: boolean): boolean {
-  // Only the playback source with dup enabled keeps the device's own speaker
-  // audible; every other source moves audio to the host.
-  return !(audioSource === "playback" && audioDup)
+  // `output` (REMOTE_SUBMIX) reroutes device audio to the host, silencing the
+  // speakers; `playback` without --audio-dup also leaves the device silent.
+  // Microphone and voice-call sources don't touch device playback at all.
+  return audioSource === "output" || (audioSource === "playback" && !audioDup)
 }
 
 const audioSourceSchema = z.enum([
@@ -166,8 +185,35 @@ export function registerAudioTools(server: McpServer): void {
 
         const outputPath = localPath ?? defaultRecordingPath(format)
         const sink = createRecordingSink(s, outputPath, format)
+        try {
+          await sink.ready
+        } catch (err) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `ffmpeg failed to start: ${(err as Error).message}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        if (!attachAudioSink(s, sink)) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "The audio stream is not available for this device; the scrcpy audio hub is not running.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
         recordingSinks.set(s, sink)
-        attachAudioSink(s, sink)
 
         const structured = {
           status: "recording",
@@ -248,9 +294,10 @@ export function registerAudioTools(server: McpServer): void {
           console.error(`[audio] Could not stat recording ${sink.outputPath}:`, (err as Error).message)
         }
 
-        const durationSeconds = sink.format === "opus"
-          ? 0
-          : wavDurationSeconds(sizeBytes)
+        // Duration comes from the raw PCM bytes ffmpeg actually received —
+        // reliable for both wav and opus, unlike the container size (which
+        // for wav includes headers and for opus is a compressed bitstream).
+        const durationSeconds = pcmDurationSeconds(sink.pcmBytes)
 
         const structured = {
           status: "stopped",
@@ -351,8 +398,35 @@ export function registerAudioTools(server: McpServer): void {
         }
 
         const sink = createPlaybackSink(s)
+        try {
+          await sink.ready
+        } catch (err) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `ffplay failed to start: ${(err as Error).message}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        if (!attachAudioSink(s, sink)) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "The audio stream is not available for this device; the scrcpy audio hub is not running.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
         playbackSinks.set(s, sink)
-        attachAudioSink(s, sink)
 
         const structured = {
           status: "playing",
