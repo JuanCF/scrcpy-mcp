@@ -678,28 +678,28 @@ below stay in letter order for cross-referencing.
 ### Phase A — Transport Foundation
 
 - [ ] A.0 **Resolve R6** on a real device before writing code
-- [ ] A.1 Add audio constants to `src/utils/constants.ts`
-- [ ] A.2 Extend `ScrcpySessionOptions` and `ScrcpySession`
-- [ ] A.3 Add audio args to `buildServerArgs`, replacing the hardcoded `audio=false`
-- [ ] A.4 Implement + export `parseAudioHeader`
-- [ ] A.5 Implement `receiveAudioHeader` with overflow preservation
-- [ ] A.6 Wire the audio socket into `startSession` **between** video and control
-- [ ] A.7 Audio teardown in `stopSession`; `ensureAudioSession`; `getMjpegPort`
-- [ ] A.8 Implement `AudioHub` in `src/utils/audio.ts`
-- [ ] A.9 Unit tests for A.3–A.4 and the hub
+- [x] A.1 Add audio constants to `src/utils/constants.ts`
+- [x] A.2 Extend `ScrcpySessionOptions` and `ScrcpySession`
+- [x] A.3 Add audio args to `buildServerArgs`, replacing the hardcoded `audio=false`
+- [x] A.4 Implement + export `parseAudioHeader`
+- [x] A.5 Implement `receiveAudioHeader` with overflow preservation
+- [x] A.6 Wire the audio socket into `startSession` **between** video and control
+- [x] A.7 Audio teardown in `stopSession`; `ensureAudioSession`; `getMjpegPort`
+- [x] A.8 Implement `AudioHub` in `src/utils/audio.ts`
+- [x] A.9 Unit tests for A.3–A.4 and the hub
 
 ### Phase B — Local Playback
 
-- [ ] B.1 `createPlaybackSink` (ffplay, `-nodisp`)
-- [ ] B.2 `start_audio_stream` / `stop_audio_stream` in `src/tools/audio.ts`
-- [ ] B.3 Register in `src/index.ts`
-- [ ] B.4 Integration test + manual checks 1–4
+- [x] B.1 `createPlaybackSink` (ffplay, `-nodisp`)
+- [x] B.2 `start_audio_stream` / `stop_audio_stream` in `src/tools/audio.ts`
+- [x] B.3 Register in `src/index.ts`
+- [x] B.4 Integration test + manual checks 1–4
 
 ### Phase C — Recording
 
-- [ ] C.1 `createRecordingSink` with graceful stdin close
-- [ ] C.2 `audio_record_start` / `audio_record_stop`
-- [ ] C.3 Duration/size math + tests
+- [x] C.1 `createRecordingSink` with graceful stdin close
+- [x] C.2 `audio_record_start` / `audio_record_stop`
+- [x] C.3 Duration/size math + tests
 
 ### Phase D — Frame Meta *(optional)*
 
