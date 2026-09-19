@@ -23,6 +23,10 @@ reviews:
     - "!package-lock.json"
     - "!icon.png"
     - "!manifest.json"
+    # Host-side capture artifacts (audio recordings default to the cwd)
+    - "!**/*.wav"
+    - "!**/*.opus"
+    - "!**/*.mp4"
 
   auto_review:
     enabled: true
@@ -57,12 +61,38 @@ reviews:
         - MCP tool registrations must include `inputSchema`, `outputSchema`, `annotations`, and `structuredContent`
         - Keep `console.error()` for server-side logging only; never write plain text to stdout
         - Preserve ADB fallback paths alongside the scrcpy fast path
+        - Host binaries (adb, scrcpy, ffmpeg, ffplay) may be configured as a
+          bare command name, which is resolved through PATH. Never `statSync`
+          a bare name — it resolves against the cwd and reports an installed
+          binary as missing.
+        - A socket read that consumes a header must leave the socket paused
+          when it is done. A flowing socket with no `data` listener silently
+          discards what arrives before the next consumer attaches, which costs
+          the h264 config packet and the first audio chunks.
+    - path: "src/{tools,utils}/audio.ts"
+      instructions: |
+        Audio capture specifics:
+        - Requires Android 11+ (SDK 30); a session without audio is still valid
+          for video, input, and clipboard, so degrade rather than fail
+        - The `output` source (REMOTE_SUBMIX) MOVES audio to the host and mutes
+          the device; only `playback` + `audioDup` (Android 13+) keeps it
+          audible. Keep `deviceMuted` in responses honest about which applies.
+        - The audio hub fans one socket out to several sinks (playback,
+          recording): a sink must never block or throw into the socket path,
+          and detaching one must leave the others running
+        - Sinks own an ffmpeg/ffplay child: handle EPIPE on stdin, give ffmpeg
+          time to finalise the container on stop, and do not log an expected
+          shutdown as an error
+        - Recordings are written to the HOST filesystem, unlike `screen_record_*`
     - path: "tests/**/*.ts"
       instructions: |
         Ensure tests cover both scrcpy and ADB fallback paths where applicable and that assertions match the structured response format (`success`, `message`, `structuredContent`, etc.).
     - path: "*.md"
       instructions: |
         Verify docs stay in sync with the source (e.g., tool counts, project structure, environment variables, and response schemas).
+        Check too that documented tool options match the Zod `inputSchema` (names, defaults, and units — `screenOffTimeout` is in seconds), that host
+        prerequisites stay accurate (ffmpeg for decoding and recording, ffplay for the viewer window and audio playback), and that the Android version
+        floor for audio (11+) and the device-muting caveat are not dropped.
 
   pre_merge_checks:
     title:

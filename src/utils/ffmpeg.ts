@@ -42,6 +42,39 @@ export function findFfplay(): string {
   return process.env.FFPLAY_PATH || "ffplay"
 }
 
+// findFfmpeg/findFfplay fall back to the bare command name, which is spawned
+// through PATH. statSync on a bare name resolves against the process cwd, so
+// asking PATH is the only way to tell "installed system-wide" apart from
+// "missing" — without this, a host with /usr/bin/ffplay reports it as absent.
+function findOnPath(name: string): string | null {
+  const command = process.platform === "win32" ? "where" : "which"
+  try {
+    const output = execFileSync(command, [name], {
+      encoding: "utf8",
+      timeout: 5000,
+    })
+    const lines = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    for (const line of lines) {
+      if (isExistingFile(line)) {
+        return line
+      }
+    }
+  } catch {
+    // binary not on PATH or lookup failed
+  }
+  return null
+}
+
+function resolveBinary(resolved: string): string | null {
+  if (resolved.includes("/") || resolved.includes("\\")) {
+    return isExistingFile(resolved) ? resolved : null
+  }
+  return findOnPath(resolved)
+}
+
 /**
  * Verify that an audio/video helper binary can be reached. Returns the resolved
  * path if it exists, otherwise null. Used to give callers a clear message before
@@ -49,17 +82,10 @@ export function findFfplay(): string {
  */
 export function probeBinary(name: string): string | null {
   if (name === "ffmpeg") {
-    const resolved = findFfmpeg()
-    return isExistingFile(resolved) ? resolved : null
+    return resolveBinary(findFfmpeg())
   }
   if (name === "ffplay") {
-    const resolved = findFfplay()
-    return isExistingFile(resolved) ? resolved : null
+    return resolveBinary(findFfplay())
   }
-  try {
-    execFileSync("which", [name], { stdio: "ignore" })
-    return name
-  } catch {
-    return null
-  }
+  return findOnPath(name)
 }

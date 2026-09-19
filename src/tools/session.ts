@@ -21,6 +21,8 @@ export function registerSessionTools(server: McpServer): void {
           "voice-performance",
         ]).optional().default("output").describe("Audio source"),
         audioDup: z.boolean().optional().default(false).describe("Keep device playback audible when using playback source (Android 13+)"),
+        stayAwake: z.boolean().optional().default(false).describe("Keep the device on while the session lasts (scrcpy --stay-awake). Only applies while the device is plugged in; the original setting is restored when the session ends."),
+        screenOffTimeout: z.number().int().positive().optional().describe("Screen-off timeout in seconds to apply while the session lasts (scrcpy --screen-off-timeout). Works on battery too, unlike stayAwake. Needs scrcpy 2.5+; the original timeout is restored when the session ends."),
       },
       outputSchema: {
         status: z.string().describe("Session status (e.g. 'connected')"),
@@ -41,10 +43,14 @@ export function registerSessionTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ serial, maxSize, maxFps, audio, audioSource, audioDup }) => {
+    async ({
+      serial, maxSize, maxFps, audio, audioSource, audioDup, stayAwake, screenOffTimeout,
+    }) => {
       try {
         const s = await resolveSerial(serial)
-        const session = await startSession(s, { maxSize, maxFps, audio, audioSource, audioDup })
+        const session = await startSession(s, {
+          maxSize, maxFps, audio, audioSource, audioDup, stayAwake, screenOffTimeout,
+        })
         const structured = {
           status: "connected",
           serial: s,

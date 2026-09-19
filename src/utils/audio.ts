@@ -136,8 +136,12 @@ export function createPlaybackSink(serial: string): PlaybackSink {
     console.error(`[audio] ffplay stderr for ${serial}:`, data.toString().trim())
   })
 
+  // ffplay exits non-zero when we kill it, which is what stopping the stream
+  // does — only report an exit we did not ask for.
+  let stopping = false
+
   proc.on("exit", (code) => {
-    if (code !== 0 && code !== null) {
+    if (!stopping && code !== 0 && code !== null) {
       console.error(`[audio] ffplay exited with code ${code} for ${serial}`)
     }
   })
@@ -162,6 +166,7 @@ export function createPlaybackSink(serial: string): PlaybackSink {
       }
     },
     end: () => {
+      stopping = true
       if (stdin && !stdin.destroyed) {
         stdin.end()
       }

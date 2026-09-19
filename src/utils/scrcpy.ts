@@ -285,6 +285,19 @@ export interface ScrcpySessionOptions {
   audioSource?: AudioSourceName
   /** Keep device playback audible with `playback`. Android 13+ only. */
   audioDup?: boolean
+  /**
+   * Keep the device on for as long as the session lasts — scrcpy's
+   * `--stay-awake`. Only takes effect while the device is plugged in; the
+   * original setting is restored when the session ends.
+   */
+  stayAwake?: boolean
+  /**
+   * Screen-off timeout in seconds to apply for the lifetime of the session —
+   * scrcpy's `--screen-off-timeout`. Unlike `stayAwake` this does not depend
+   * on the device being plugged in. Needs scrcpy 2.5+; the original timeout is
+   * restored when the session ends.
+   */
+  screenOffTimeout?: number
 }
 
 export interface ScrcpySession {
@@ -312,6 +325,8 @@ export interface ScrcpySession {
   audioAvailable: boolean
   audioCodec: "raw" | null
   clipboardContent: string | null
+  /** The options this session was started with, so restarts can preserve them. */
+  options: ScrcpySessionOptions
   viewerProcess: ChildProcess | null  // the native scrcpy viewer window, if open
 }
 
@@ -500,6 +515,13 @@ function startVideoStream(
         try { ffmpeg.stdin.write(chunk) } catch { /* EPIPE handled above */ }
       }
     })
+    // receiveDeviceMeta left the socket paused so no stream bytes were lost
+    // while the caller set things up; start the flow now that ffmpeg is fed.
+    videoSocket.resume()
+  } else {
+    // No stdin to feed: still drain the socket so the server isn't blocked by
+    // TCP backpressure, which would take the control socket down with it.
+    videoSocket.resume()
   }
 
   return firstFramePromise
@@ -960,6 +982,8 @@ export function buildServerArgs(
     audio = false,
     audioSource = "output",
     audioDup = false,
+    stayAwake = false,
+    screenOffTimeout,
   } = options
 
   const streamMetaArg = isVersionAtLeast(version, 4, 0, 0)
@@ -999,6 +1023,35 @@ export function buildServerArgs(
       `audio_source=${audioSource}`,
     )
     if (audioDup) args.push("audio_dup=true")
+  }
+
+  // Both keep the screen usable for long automations. stay_awake holds the
+  // device on but only while it is plugged in, so screen_off_timeout is the
+  // one that works on battery. The server restores the previous values on
+  // exit (cleanup=true), so nothing leaks past the session.
+  if (stayAwake) {
+    args.push("stay_awake=true")
+  }
+
+  if (screenOffTimeout !== undefined) {
+    if (!Number.isInteger(screenOffTimeout) || screenOffTimeout <= 0) {
+      throw new Error(
+        `screenOffTimeout must be a positive whole number of seconds, got ${screenOffTimeout}`
+      )
+    }
+    // Older servers reject unknown options and refuse to start, which would
+    // cost the caller the whole session over a convenience setting.
+    if (isVersionAtLeast(version, 2, 5, 0)) {
+      // The server writes this straight into Android's `screen_off_timeout`
+      // setting, which is milliseconds — scrcpy's own CLI takes seconds and
+      // converts, and so do we. Passing seconds through unscaled would blank
+      // the screen almost immediately, the opposite of what the caller asked.
+      args.push(`screen_off_timeout=${screenOffTimeout * 1000}`)
+    } else {
+      console.error(
+        `[scrcpy] screen_off_timeout needs scrcpy 2.5+, ignoring it on ${version}`
+      )
+    }
   }
 
   return args
@@ -1249,7 +1302,8 @@ interface AudioHeaderResult {
   overflow: Buffer
 }
 
-const receiveAudioHeader = async (
+// Exported for tests.
+export const receiveAudioHeader = async (
   socket: net.Socket,
   port: number
 ): Promise<AudioHeaderResult> =>
@@ -1269,6 +1323,10 @@ const receiveAudioHeader = async (
         clearTimeout(timer)
         socket.off("data", onData)
         socket.off("error", onError)
+        // Back to paused mode: a flowing socket with no "data" listener
+        // silently discards everything that arrives before the audio hub
+        // attaches its own handler.
+        socket.pause()
 
         const header = parseAudioHeader(buffer)
         const overflow = buffer.length > AUDIO_HEADER_SIZE
@@ -1295,7 +1353,8 @@ const receiveAudioHeader = async (
     socket.resume()
   })
 
-const receiveDeviceMeta = async (
+// Exported for tests.
+export const receiveDeviceMeta = async (
   socket: net.Socket,
   port: number,
   layout: VideoMetaLayout
@@ -1316,6 +1375,11 @@ const receiveDeviceMeta = async (
         clearTimeout(timer)
         socket.off("data", onData)
         socket.off("error", onError)
+        // Back to paused mode. A flowing socket with no "data" listener drops
+        // whatever arrives next, and with audio enabled the audio header read
+        // sits between here and startVideoStream — long enough to lose the
+        // h264 config packet, after which ffmpeg never decodes a frame.
+        socket.pause()
 
         const deviceName = buffer
           .subarray(DEVICE_NAME_OFFSET, DEVICE_NAME_OFFSET + 64)
@@ -1692,6 +1756,7 @@ export async function startSession(
       audioAvailable,
       audioCodec,
       clipboardContent: null,
+      options,
       viewerProcess: null,
     }
 

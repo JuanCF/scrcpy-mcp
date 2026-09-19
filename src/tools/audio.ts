@@ -51,7 +51,11 @@ async function ensureAudioSession(
   stopMjpegServer(s)
   await stopSession(s)
 
+  // Restarting drops whatever the session was started with (frame size, and
+  // the screen-awake settings that a long automation depends on), so carry
+  // the previous options over and let the audio ones win.
   const newSession = await startSession(s, {
+    ...session?.options,
     ...options,
     audio: true,
   })

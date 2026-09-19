@@ -164,6 +164,22 @@ If you need to configure custom options (such as pointing to a non-standard `scr
 | `start_session` | Start a scrcpy session. When active, input and screenshots use the fast path (10-50x faster). |
 | `stop_session` | Stop the scrcpy session. Tools fall back to ADB. |
 
+`start_session` options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `maxSize` | `1024` | Max video frame dimension in pixels |
+| `maxFps` | `30` | Max frames per second |
+| `audio` | `false` | Capture audio (see the heads-up below) |
+| `audioSource` | `output` | Audio source (`output`, `playback`, `mic`, `voice-call`, …) |
+| `audioDup` | `false` | Keep device playback audible with `audioSource: "playback"` (Android 13+) |
+| `stayAwake` | `false` | Keep the device on for the whole session (scrcpy `--stay-awake`). Applies **only while the device is plugged in**. |
+| `screenOffTimeout` | (device setting) | Screen-off timeout **in seconds** for the whole session (scrcpy `--screen-off-timeout`). Works on battery too. Needs scrcpy 2.5+. |
+
+Both screen-awake options are temporary: scrcpy restores the device's original
+values when the session ends, including when a tool restarts the session to
+turn audio on.
+
 ### Video Streaming
 
 | Tool | Description |
@@ -276,7 +292,7 @@ start_session → take screenshots → tap → swipe → ...
 | `SCRCPY_SERVER_PATH` | (auto) | Path to the scrcpy-server binary |
 | `SCRCPY_SERVER_VERSION` | (auto) | Version of the scrcpy-server binary |
 | `FFMPEG_PATH` | `ffmpeg` | Path to the ffmpeg binary |
-| `FFPLAY_PATH` | `ffplay` | Path to the ffplay binary (for the video stream viewer) |
+| `FFPLAY_PATH` | `ffplay` | Path to the ffplay binary (video stream viewer and audio playback) |
 
 When only one device is connected, tools auto-detect it. With multiple devices, pass the `serial` parameter explicitly or set `ANDROID_SERIAL`.
 
@@ -296,6 +312,18 @@ Start a scrcpy session with `start_session` to enable the fast video stream path
 
 **`expand_notifications` / `expand_settings` / `collapse_panels` fail**
 These tools require an active scrcpy session. Run `start_session` first.
+
+**The device screen keeps turning off during long automations**
+Start the session with `stayAwake: true` (plugged in only) or `screenOffTimeout: <seconds>`, which also works on battery. Both are restored when the session ends.
+
+**`start_audio_stream` says ffplay was not found**
+Install ffmpeg (ffplay ships with it), or set `FFPLAY_PATH` to the binary. The same applies to `audio_record_start` and `FFMPEG_PATH`.
+
+**Audio recording is silent**
+`REMOTE_SUBMIX` only captures what apps are actually playing — a recording made while nothing plays is digital silence, which is expected. Also check the device is not muted, and remember the default `output` source moves the audio to the host, so the device goes quiet while capturing. Use `audioSource: "playback"` with `audioDup: true` (Android 13+) to keep it audible.
+
+**Audio tools report audio as unavailable**
+Audio capture needs Android 11+ (SDK 30). On older devices the session still works for video, input, and clipboard.
 
 **Clipboard doesn't work on Android 10+**
 ADB clipboard access is restricted on Android 10+. Start a scrcpy session — the scrcpy clipboard protocol bypasses this restriction.
