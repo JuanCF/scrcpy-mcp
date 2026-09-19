@@ -2,7 +2,7 @@
 
 ## Development
 
-Node.js 24 or newer is required. [`.nvmrc`](.nvmrc) pins the version, and CI
+Node.js 24 or newer is required. [`.nvmrc`](../.nvmrc) pins the version, and CI
 reads that same file, so `nvm use` in the repo root puts you on exactly what
 CI runs. `.npmrc` sets `engine-strict=true`, so `npm install` fails outright
 on an older runtime rather than warning.
@@ -39,7 +39,7 @@ at scrcpy 4.0.
 
 ### Conventions
 
-[AGENTS.md](AGENTS.md) documents the code style and project conventions this
+[AGENTS.md](../AGENTS.md) documents the code style and project conventions this
 repo follows — imports, formatting, error handling, the MCP tool registration
 pattern, and the checks to run before committing. Read it before your first PR.
 

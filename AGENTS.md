@@ -8,8 +8,10 @@ scrcpy-mcp is a Model Context Protocol (MCP) server that provides AI agents with
 
 ## Project Documentation
 
-- **ROADMAP.md** - Implementation roadmap with phases and milestones
-- **PLAN.md** - Detailed implementation plan with architecture and tool specifications
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** - Implementation roadmap with phases and milestones
+- **[docs/PLAN.md](docs/PLAN.md)** - Detailed implementation plan with architecture and tool specifications
+- **[docs/AUDIO_PLAN.md](docs/AUDIO_PLAN.md)** - Audio streaming design (phases, protocol facts, task checklist)
+- **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** - Contributor workflow
 
 ## Build/Lint/Test Commands
 
@@ -55,11 +57,14 @@ src/
 ├── index.ts           # Entry point, server setup, tool registration
 ├── utils/
 │   ├── adb.ts         # ADB utility functions (exec, device detection, etc.)
+│   ├── audio.ts       # Audio hub, playback sink, recording sink
+│   ├── ffmpeg.ts      # ffmpeg/ffplay binary resolution
 │   ├── scrcpy.ts      # scrcpy session lifecycle, control protocol, video decode
 │   ├── mjpeg.ts       # HTTP MJPEG server and ffplay viewer launcher
 │   └── constants.ts   # Shared constants (protocol types, env vars, keycodes)
 └── tools/
     ├── apps.ts        # App management (start, stop, install, uninstall, list, current)
+    ├── audio.ts       # Audio streaming and recording tools
     ├── clipboard.ts   # Clipboard get/set (scrcpy + ADB fallback)
     ├── device.ts      # Device management (list, info, screen, panels, rotation, WiFi)
     ├── files.ts       # File push/pull/list

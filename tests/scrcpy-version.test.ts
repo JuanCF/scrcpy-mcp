@@ -165,6 +165,41 @@ describe("buildServerArgs", () => {
       expect(args).toContain("video_bit_rate=4000000")
     }
   })
+
+  it("omits the screen-awake options unless they are asked for", () => {
+    const args = buildServerArgs("SERIAL", 0x1234, "3.3.4")
+    expect(args.some((arg) => arg.startsWith("stay_awake="))).toBe(false)
+    expect(args.some((arg) => arg.startsWith("screen_off_timeout="))).toBe(false)
+  })
+
+  it("passes stay_awake when stayAwake is set", () => {
+    const args = buildServerArgs("SERIAL", 0x1234, "3.3.4", { stayAwake: true })
+    expect(args).toContain("stay_awake=true")
+  })
+
+  it("passes screen_off_timeout in milliseconds on scrcpy 2.5+", () => {
+    // The option is given in seconds (as scrcpy's CLI flag is), but the server
+    // writes it into Android's screen_off_timeout setting, which is in ms.
+    for (const version of ["2.5", "3.3.4", "4.0"]) {
+      const args = buildServerArgs("SERIAL", 0x1234, version, { screenOffTimeout: 600 })
+      expect(args).toContain("screen_off_timeout=600000")
+    }
+  })
+
+  it("drops screen_off_timeout on servers too old to know it", () => {
+    // An unknown option makes the server refuse to start, which would cost the
+    // caller the session over a convenience setting.
+    const args = buildServerArgs("SERIAL", 0x1234, "2.4", { screenOffTimeout: 600 })
+    expect(args.some((arg) => arg.startsWith("screen_off_timeout="))).toBe(false)
+  })
+
+  it("rejects a screen-off timeout that is not a positive whole number", () => {
+    for (const bad of [0, -1, 1.5]) {
+      expect(() =>
+        buildServerArgs("SERIAL", 0x1234, "3.3.4", { screenOffTimeout: bad })
+      ).toThrow(/positive whole number/)
+    }
+  })
 })
 
 describe("videoMetaLayout", () => {

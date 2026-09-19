@@ -1,10 +1,10 @@
 import { spawn, execFileSync, ChildProcess } from "child_process"
-import { createRequire } from "module"
 import * as net from "net"
 import * as path from "path"
 import { StringDecoder } from "string_decoder"
 import * as fs from "fs"
 import { execAdb, execAdbShell, resolveSerial, getScreenSize } from "./adb.js"
+import { findFfmpeg } from "./ffmpeg.js"
 import {
   ADB_PATH,
   SCRCPY_SERVER_PORT,
@@ -40,7 +40,16 @@ import {
   V4_DEVICE_META_SIZE,
   V4_VIDEO_WIDTH_OFFSET,
   V4_VIDEO_HEIGHT_OFFSET,
+  AUDIO_HEADER_SIZE,
+  AUDIO_CODEC_ID_RAW,
+  AUDIO_CODEC_ID_OPUS,
+  AUDIO_CODEC_ID_AAC,
+  AUDIO_CODEC_ID_FLAC,
+  AUDIO_STREAM_DISABLED,
+  AUDIO_STREAM_CONFIG_ERROR,
+  AUDIO_HEADER_TIMEOUT_MS,
 } from "./constants.js"
+import { startAudioHub, stopAudioHub } from "./audio.js"
 
 export function serializeInjectKeycode(
   action: number,
@@ -261,10 +270,34 @@ export async function startAppViaScrcpy(
   sendControlMessage(serial, msg)
 }
 
+export type AudioSourceName =
+  | "output" | "playback" | "mic" | "mic-unprocessed" | "mic-camcorder"
+  | "mic-voice-recognition" | "mic-voice-communication"
+  | "voice-call" | "voice-call-uplink" | "voice-call-downlink"
+  | "voice-performance"
+
 export interface ScrcpySessionOptions {
   maxSize?: number
   maxFps?: number
   videoBitRate?: number
+  /** Opt-in: `output` (the default source) MUTES the device while capturing. */
+  audio?: boolean
+  audioSource?: AudioSourceName
+  /** Keep device playback audible with `playback`. Android 13+ only. */
+  audioDup?: boolean
+  /**
+   * Keep the device on for as long as the session lasts — scrcpy's
+   * `--stay-awake`. Only takes effect while the device is plugged in; the
+   * original setting is restored when the session ends.
+   */
+  stayAwake?: boolean
+  /**
+   * Screen-off timeout in seconds to apply for the lifetime of the session —
+   * scrcpy's `--screen-off-timeout`. Unlike `stayAwake` this does not depend
+   * on the device being plugged in. Needs scrcpy 2.5+; the original timeout is
+   * restored when the session ends.
+   */
+  screenOffTimeout?: number
 }
 
 export interface ScrcpySession {
@@ -272,6 +305,7 @@ export interface ScrcpySession {
   scid: number
   controlSocket: net.Socket | null
   videoSocket: net.Socket | null
+  audioSocket: net.Socket | null
   videoProcess: ChildProcess | null
   frameBuffer: Buffer | null
   // Native device resolution (from `wm size`). This is the coordinate space
@@ -287,7 +321,12 @@ export interface ScrcpySession {
   // arrived). The session is still usable for control (input/clipboard/etc.)
   // via the control socket; screenshots fall back to `adb screencap`.
   videoAvailable: boolean
+  /** False when audio was requested but the device refused it. Session stays usable. */
+  audioAvailable: boolean
+  audioCodec: "raw" | null
   clipboardContent: string | null
+  /** The options this session was started with, so restarts can preserve them. */
+  options: ScrcpySessionOptions
   viewerProcess: ChildProcess | null  // the native scrcpy viewer window, if open
 }
 
@@ -305,30 +344,6 @@ export function hasActiveSession(serial: string): boolean {
 export function getLatestFrame(serial: string): Buffer | null {
   const session = sessions.get(serial)
   return session?.frameBuffer ?? null
-}
-
-const findFfmpeg = (): string => {
-  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
-    return process.env.FFMPEG_PATH
-  }
-  try {
-    const ffmpegStatic: string | null = createRequire(import.meta.url)("ffmpeg-static")
-    // ffmpeg-static resolves to a path even when its postinstall binary
-    // download was skipped/failed, so verify the file actually exists before
-    // returning it. Otherwise spawn fails with ENOENT and the video socket
-    // teardown cascades into killing the whole scrcpy session.
-    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
-      try {
-        fs.accessSync(ffmpegStatic, fs.constants.X_OK)
-        return ffmpegStatic
-      } catch {
-        // file exists but is not executable, fall back to system ffmpeg
-      }
-    }
-  } catch {
-    // ffmpeg-static not installed, fall back to system ffmpeg
-  }
-  return "ffmpeg"
 }
 
 function startVideoStream(
@@ -500,6 +515,13 @@ function startVideoStream(
         try { ffmpeg.stdin.write(chunk) } catch { /* EPIPE handled above */ }
       }
     })
+    // receiveDeviceMeta left the socket paused so no stream bytes were lost
+    // while the caller set things up; start the flow now that ffmpeg is fed.
+    videoSocket.resume()
+  } else {
+    // No stdin to feed: still drain the socket so the server isn't blocked by
+    // TCP backpressure, which would take the control socket down with it.
+    videoSocket.resume()
   }
 
   return firstFramePromise
@@ -957,13 +979,18 @@ export function buildServerArgs(
     maxSize = 1024,
     maxFps = 30,
     videoBitRate = 8000000,
+    audio = false,
+    audioSource = "output",
+    audioDup = false,
+    stayAwake = false,
+    screenOffTimeout,
   } = options
 
   const streamMetaArg = isVersionAtLeast(version, 4, 0, 0)
     ? "send_stream_meta=true"
     : "send_codec_meta=true"
 
-  return [
+  const args = [
     "-s", serial, "shell",
     `CLASSPATH=${SCRCPY_SERVER_PATH_LOCAL}`,
     "app_process",
@@ -977,7 +1004,7 @@ export function buildServerArgs(
     `video_bit_rate=${videoBitRate}`,
     "tunnel_forward=true",
     "control=true",
-    "audio=false",
+    `audio=${audio}`,
     "video=true",
     "cleanup=true",
     "power_off_on_close=false",
@@ -989,6 +1016,45 @@ export function buildServerArgs(
     streamMetaArg,
     "video_codec=h264",
   ]
+
+  if (audio) {
+    args.push(
+      "audio_codec=raw",
+      `audio_source=${audioSource}`,
+    )
+    if (audioDup) args.push("audio_dup=true")
+  }
+
+  // Both keep the screen usable for long automations. stay_awake holds the
+  // device on but only while it is plugged in, so screen_off_timeout is the
+  // one that works on battery. The server restores the previous values on
+  // exit (cleanup=true), so nothing leaks past the session.
+  if (stayAwake) {
+    args.push("stay_awake=true")
+  }
+
+  if (screenOffTimeout !== undefined) {
+    if (!Number.isInteger(screenOffTimeout) || screenOffTimeout <= 0) {
+      throw new Error(
+        `screenOffTimeout must be a positive whole number of seconds, got ${screenOffTimeout}`
+      )
+    }
+    // Older servers reject unknown options and refuse to start, which would
+    // cost the caller the whole session over a convenience setting.
+    if (isVersionAtLeast(version, 2, 5, 0)) {
+      // The server writes this straight into Android's `screen_off_timeout`
+      // setting, which is milliseconds — scrcpy's own CLI takes seconds and
+      // converts, and so do we. Passing seconds through unscaled would blank
+      // the screen almost immediately, the opposite of what the caller asked.
+      args.push(`screen_off_timeout=${screenOffTimeout * 1000}`)
+    } else {
+      console.error(
+        `[scrcpy] screen_off_timeout needs scrcpy 2.5+, ignoring it on ${version}`
+      )
+    }
+  }
+
+  return args
 }
 
 // Cap on the retained server stderr tail. The adb child lives for the whole
@@ -1209,7 +1275,86 @@ export function videoMetaLayout(version: string): VideoMetaLayout {
   }
 }
 
-const receiveDeviceMeta = async (
+export type AudioHeader =
+  | { kind: "codec"; codec: "raw" | "opus" | "aac" | "flac" }
+  | { kind: "disabled" }
+  | { kind: "error" }
+  | { kind: "unknown"; id: number }
+
+export function parseAudioHeader(buffer: Buffer): AudioHeader {
+  if (buffer.length < AUDIO_HEADER_SIZE) {
+    return { kind: "unknown", id: -1 }
+  }
+  const id = buffer.readUInt32BE(0)
+
+  if (id === AUDIO_STREAM_DISABLED) return { kind: "disabled" }
+  if (id === AUDIO_STREAM_CONFIG_ERROR) return { kind: "error" }
+  if (id === AUDIO_CODEC_ID_RAW) return { kind: "codec", codec: "raw" }
+  if (id === AUDIO_CODEC_ID_OPUS) return { kind: "codec", codec: "opus" }
+  if (id === AUDIO_CODEC_ID_AAC) return { kind: "codec", codec: "aac" }
+  if (id === AUDIO_CODEC_ID_FLAC) return { kind: "codec", codec: "flac" }
+
+  return { kind: "unknown", id }
+}
+
+interface AudioHeaderResult {
+  header: AudioHeader
+  overflow: Buffer
+}
+
+// Exported for tests.
+export const receiveAudioHeader = async (
+  socket: net.Socket,
+  port: number
+): Promise<AudioHeaderResult> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      socket.off("data", onData)
+      socket.off("error", onError)
+      resolve({ header: { kind: "disabled" }, overflow: Buffer.alloc(0) })
+    }, AUDIO_HEADER_TIMEOUT_MS)
+
+    let buffer = Buffer.alloc(0)
+
+    const onData = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk])
+
+      if (buffer.length >= AUDIO_HEADER_SIZE) {
+        clearTimeout(timer)
+        socket.off("data", onData)
+        socket.off("error", onError)
+        // Back to paused mode: a flowing socket with no "data" listener
+        // silently discards everything that arrives before the audio hub
+        // attaches its own handler.
+        socket.pause()
+
+        const header = parseAudioHeader(buffer)
+        const overflow = buffer.length > AUDIO_HEADER_SIZE
+          ? Buffer.from(buffer.subarray(AUDIO_HEADER_SIZE))
+          : Buffer.alloc(0)
+
+        resolve({ header, overflow })
+      }
+    }
+
+    const onError = (err: Error) => {
+      clearTimeout(timer)
+      socket.off("data", onData)
+      socket.off("error", onError)
+      console.error(
+        `[scrcpy] Audio socket error on port ${port}:`,
+        err.message
+      )
+      resolve({ header: { kind: "disabled" }, overflow: Buffer.alloc(0) })
+    }
+
+    socket.on("data", onData)
+    socket.on("error", onError)
+    socket.resume()
+  })
+
+// Exported for tests.
+export const receiveDeviceMeta = async (
   socket: net.Socket,
   port: number,
   layout: VideoMetaLayout
@@ -1230,6 +1375,11 @@ const receiveDeviceMeta = async (
         clearTimeout(timer)
         socket.off("data", onData)
         socket.off("error", onError)
+        // Back to paused mode. A flowing socket with no "data" listener drops
+        // whatever arrives next, and with audio enabled the audio header read
+        // sits between here and startVideoStream — long enough to lose the
+        // h264 config packet, after which ffmpeg never decodes a frame.
+        socket.pause()
 
         const deviceName = buffer
           .subarray(DEVICE_NAME_OFFSET, DEVICE_NAME_OFFSET + 64)
@@ -1355,6 +1505,48 @@ const startDeviceMessageHandler = (session: ScrcpySession): void => {
   })
 }
 
+// Mirrors the buildServerArgs defaults, so a session started with partial
+// options compares equal to a request that spells the same values out.
+const SESSION_OPTION_DEFAULTS: ScrcpySessionOptions = {
+  maxSize: 1024,
+  maxFps: 30,
+  videoBitRate: 8000000,
+  audio: false,
+  audioSource: "output",
+  audioDup: false,
+  stayAwake: false,
+}
+
+// An option left undefined in the request is "don't care" and never forces a
+// restart — that's what lets startSession(s) reuse whatever is running.
+function sessionOptionsMatch(
+  current: ScrcpySessionOptions,
+  requested: ScrcpySessionOptions
+): boolean {
+  const keys = [
+    "maxSize", "maxFps", "videoBitRate", "audio", "stayAwake", "screenOffTimeout",
+  ] as const
+  for (const key of keys) {
+    const want = requested[key]
+    if (want !== undefined && (current[key] ?? SESSION_OPTION_DEFAULTS[key]) !== want) {
+      return false
+    }
+  }
+
+  // audioSource/audioDup are inert unless audio is on for both sides;
+  // comparing them otherwise would restart sessions over settings that
+  // change nothing.
+  if ((requested.audio ?? false) && (current.audio ?? false)) {
+    for (const key of ["audioSource", "audioDup"] as const) {
+      const want = requested[key]
+      if (want !== undefined && (current[key] ?? SESSION_OPTION_DEFAULTS[key]) !== want) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
 export async function startSession(
   serial: string,
   options: ScrcpySessionOptions = {}
@@ -1369,7 +1561,14 @@ export async function startSession(
   const s = await resolveSerial(serial)
 
   if (hasActiveSession(s)) {
-    return sessions.get(s)!
+    const existing = sessions.get(s)!
+    if (sessionOptionsMatch(existing.options, options)) {
+      return existing
+    }
+    // The caller asked for something the running session does not have (e.g.
+    // audio on a video-only session, or a different stayAwake) — restart so
+    // the requested options actually take effect.
+    await stopSession(s)
   }
 
   await pushScrcpyServer(s, serverPath)
@@ -1433,11 +1632,36 @@ export async function startSession(
   }
 
   let session: ScrcpySession | null = null
+  let audioSocket: net.Socket | null = null
   try {
     // In forward tunnel mode the server accepts sockets in order:
-    // video, then control. It only sends device metadata AFTER all
-    // sockets have been accepted. So we must connect both sockets
+    // video, then audio, then control. It only sends device metadata AFTER all
+    // sockets have been accepted. So we must connect every requested socket
     // before attempting to read the metadata from the video socket.
+    if (options.audio) {
+      let lastAudioError: Error | null = null
+      const audioConnectDeadline = Date.now() + 5000
+      while (Date.now() < audioConnectDeadline) {
+        try {
+          const remaining = audioConnectDeadline - Date.now()
+          if (remaining <= 0) break
+          audioSocket = await connectToServer(port, remaining)
+          break
+        } catch (err) {
+          lastAudioError = err as Error
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+      }
+      if (audioSocket) {
+        audioSocket.pause()
+      } else {
+        console.error(
+          `[scrcpy] Failed to connect audio socket on port ${port} for device ${s}:` +
+            ` ${lastAudioError?.message ?? "timeout"}`
+        )
+      }
+    }
+
     let controlSocket: net.Socket | null = null
     let lastControlError: Error | null = null
     const controlConnectDeadline = Date.now() + 5000
@@ -1455,6 +1679,7 @@ export async function startSession(
 
     if (!controlSocket) {
       socket.destroy()
+      audioSocket?.destroy()
       throw new Error(
         `Failed to connect control socket on port ${port} for device ${s} within timeout`,
         { cause: lastControlError }
@@ -1507,6 +1732,44 @@ export async function startSession(
       socket.destroy()
     }
 
+    let audioAvailable = false
+    let audioCodec: "raw" | null = null
+    let audioOverflow: Buffer = Buffer.alloc(0)
+    if (audioSocket) {
+      try {
+        const audioMeta = await receiveAudioHeader(audioSocket, port)
+        audioOverflow = audioMeta.overflow
+        if (audioMeta.header.kind === "codec" && audioMeta.header.codec === "raw") {
+          audioAvailable = true
+          audioCodec = "raw"
+        } else if (audioMeta.header.kind === "disabled") {
+          console.error(
+            `[scrcpy] Audio unavailable for ${s} (Android < 11 or capture failed); ` +
+              `continuing without audio.`
+          )
+        } else if (audioMeta.header.kind === "error") {
+          console.error(
+            `[scrcpy] Audio configuration error for ${s}; continuing without audio.`
+          )
+        } else {
+          console.error(
+            `[scrcpy] Unknown audio header for ${s}: ` +
+              `${(audioMeta.header as { id: number }).id?.toString(16) ?? "n/a"}; ` +
+              `continuing without audio.`
+          )
+        }
+      } catch (err) {
+        console.error(
+          `[scrcpy] Audio header read failed for ${s}:`,
+          (err as Error).message
+        )
+      }
+      if (!audioAvailable && audioSocket) {
+        audioSocket.destroy()
+        audioSocket = null
+      }
+    }
+
     // Fall back to the frame size for native coords only if `wm size` failed
     // AND we have a real frame size; otherwise coordinates are 1:1 with frame.
     if (!nativeSize) {
@@ -1524,7 +1787,8 @@ export async function startSession(
     console.error(
       `[scrcpy] Frame size ${frameSize.width}x${frameSize.height}, native size ` +
         `${nativeSize.width}x${nativeSize.height}` +
-        (videoAvailable ? "" : " (video unavailable)")
+        (videoAvailable ? "" : " (video unavailable)") +
+        (audioAvailable ? " (audio raw)" : options.audio ? " (audio unavailable)" : "")
     )
 
     session = {
@@ -1532,12 +1796,16 @@ export async function startSession(
       scid,
       controlSocket,
       videoSocket: videoAvailable ? socket : null,
+      audioSocket: audioAvailable ? audioSocket : null,
       videoProcess: null,
       frameBuffer: null,
       screenSize: nativeSize,
       frameSize,
       videoAvailable,
+      audioAvailable,
+      audioCodec,
       clipboardContent: null,
+      options,
       viewerProcess: null,
     }
 
@@ -1560,6 +1828,10 @@ export async function startSession(
       }
     }
 
+    if (audioAvailable && audioSocket) {
+      startAudioHub(s, audioSocket, audioOverflow)
+    }
+
     controlSocket.on("close", () => {
       currentSession.controlSocket = null
     })
@@ -1577,6 +1849,8 @@ export async function startSession(
       sessions.delete(s)
     }
     socket.destroy()
+    audioSocket?.destroy()
+    stopAudioHub(s)
     try {
       await execAdbShell(s, `pkill -f scrcpy-server`)
     } catch {
@@ -1600,6 +1874,11 @@ export async function stopSession(serial: string): Promise<void> {
     session.videoSocket = null
   }
 
+  if (session.audioSocket) {
+    session.audioSocket.destroy()
+    session.audioSocket = null
+  }
+
   if (session.controlSocket) {
     session.controlSocket.destroy()
     session.controlSocket = null
@@ -1609,6 +1888,8 @@ export async function stopSession(serial: string): Promise<void> {
     session.videoProcess.kill()
     session.videoProcess = null
   }
+
+  stopAudioHub(s)
 
   if (session.viewerProcess && !session.viewerProcess.killed) {
     session.viewerProcess.kill()
