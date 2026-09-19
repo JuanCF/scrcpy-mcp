@@ -142,3 +142,29 @@ export const VIDEO_HEIGHT_OFFSET = 72
 export const V4_DEVICE_META_SIZE = 80
 export const V4_VIDEO_WIDTH_OFFSET = 72
 export const V4_VIDEO_HEIGHT_OFFSET = 76
+
+/**
+ * scrcpy audio socket. Identical in 3.x and 4.x: the header is 4 bytes holding
+ * the codec id and nothing else — audio never carries width/height, and did not
+ * gain the session-meta field video got in 4.0. The dummy byte and the 64-byte
+ * device name go to the FIRST socket only, which is the video socket whenever
+ * video is enabled, so the audio socket starts directly at this header.
+ */
+export const AUDIO_HEADER_SIZE = 4
+
+export const AUDIO_CODEC_ID_RAW = 0x00726177
+export const AUDIO_CODEC_ID_OPUS = 0x6f707573
+export const AUDIO_CODEC_ID_AAC = 0x00616163
+export const AUDIO_CODEC_ID_FLAC = 0x666c6163
+
+/** Sentinels the server writes in place of a codec id (writeDisableStream). */
+export const AUDIO_STREAM_DISABLED = 0x00000000
+export const AUDIO_STREAM_CONFIG_ERROR = 0x00000001
+
+/** Raw capture format, fixed by the server's AudioConfig. */
+export const AUDIO_SAMPLE_RATE = 48000
+export const AUDIO_CHANNELS = 2
+export const AUDIO_SAMPLE_FORMAT = "s16le"
+export const AUDIO_BYTES_PER_SAMPLE = 2
+
+export const AUDIO_HEADER_TIMEOUT_MS = 5000
