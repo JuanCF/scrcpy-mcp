@@ -283,6 +283,25 @@ Enable watching the device screen in real-time while MCP controls it.
 - Can run alongside existing control socket connection
 - Limitation: only one scrcpy H.264 encoder session per device — launching a second scrcpy client would evict the MCP session
 
+### 6.2 Audio Streaming
+
+Forward the device's audio to the host. Full design in [AUDIO_PLAN.md](AUDIO_PLAN.md).
+
+- [ ] 6.2.1 Phase A — transport: `audio=true` server args, three-socket connect (video → audio → control), 4-byte codec-id header, `AudioHub` fan-out
+- [ ] 6.2.2 Phase C — `audio_record_start` / `audio_record_stop`: capture to `.wav` (default) / `.opus` on the host
+- [ ] 6.2.3 Phase B — `start_audio_stream` / `stop_audio_stream`: device audio out of the host speakers via `ffplay -nodisp`
+- [ ] 6.2.4 Phase D — `send_frame_meta=true` support (12-byte packet headers; flag bits differ between 3.x and 4.x)
+- [ ] 6.2.5 Phase E — single synced audio+video viewer over MPEG-TS (depends on 6.2.4)
+
+**Technical notes:**
+- Audio wire format is identical in scrcpy 3.x and 4.x — only `send_codec_meta` → `send_stream_meta` differs, and that is already handled
+- The audio socket is second in accept order and carries neither the dummy byte nor the device name (both go to the video socket)
+- Requires Android 11+; the default `audio_source=output` (REMOTE_SUBMIX) **mutes the device** while capturing, so audio is opt-in
+- Raw PCM (S16LE 48 kHz stereo) until 6.2.4 lands: without frame meta there are no packet boundaries, so compressed codecs are undecodable
+- MJPEG cannot carry audio — the existing viewer window stays silent until 6.2.5
+- Build order is A → C → B: recording lands before playback, because an audio file is usable by an agent while playback mainly serves human demos
+- 6.2.4 and 6.2.5 are deferred, not scheduled — see the Decisions Log in [AUDIO_PLAN.md](AUDIO_PLAN.md) for the triggers that would promote them
+
 ---
 
 ### 6.2 Audio Streaming & Recording
@@ -317,6 +336,7 @@ Capture device audio on the host: stream to speakers or record to file.
 | 3 | 3.1 - 3.3 | App + UI tools | Complete app management and UI automation |
 | 4 | 4.1 - 4.4 | Remaining tools | Shell, files, recording |
 | 5 | 5.1 - 5.3 | Polish & publish | npm package, README |
+| 6 | 6.1 - 6.2 | Post-release features | Live video streaming, audio streaming |
 
 **Total steps:** 80+ individual tasks
 **Estimated time:** 6-8 hours of focused work
