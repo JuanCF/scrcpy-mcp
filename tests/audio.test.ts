@@ -29,6 +29,7 @@ import {
   onAudioHubStopped,
   pcmDurationSeconds,
   createRecordingSink,
+  classifyFfmpegExit,
 } from "../src/utils/audio.js"
 import { probeBinary } from "../src/utils/ffmpeg.js"
 
@@ -346,6 +347,37 @@ describe("header reads leave the socket paused", () => {
     } finally {
       close()
     }
+  })
+})
+
+describe("classifyFfmpegExit", () => {
+  it("treats a clean exit as no failure", () => {
+    expect(classifyFfmpegExit(0, null, false)).toBeNull()
+  })
+
+  it("reports a nonzero exit code", () => {
+    expect(classifyFfmpegExit(1, null, false)).toMatch(/exited with code 1/)
+  })
+
+  // end() force-kills ffmpeg when it overruns the finalisation timeout; the
+  // container is still written best-effort, and `killed` already reports it.
+  it("accepts the SIGKILL that end() sends", () => {
+    expect(classifyFfmpegExit(null, "SIGKILL", true)).toBeNull()
+  })
+
+  // Regression: the handler used to ignore every code === null exit, so an OOM
+  // kill or a crash left failure unset and audio_record_stop reported a
+  // truncated file as a good recording.
+  it("reports a SIGKILL we did not send", () => {
+    expect(classifyFfmpegExit(null, "SIGKILL", false)).toMatch(/terminated by SIGKILL/)
+  })
+
+  it("reports a crash signal even after a force-kill was requested", () => {
+    expect(classifyFfmpegExit(null, "SIGSEGV", true)).toMatch(/terminated by SIGSEGV/)
+  })
+
+  it("reports an external SIGTERM", () => {
+    expect(classifyFfmpegExit(null, "SIGTERM", false)).toMatch(/terminated by SIGTERM/)
   })
 })
 

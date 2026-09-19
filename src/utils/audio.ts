@@ -247,11 +247,30 @@ export interface RecordingSink extends AudioSink {
   /** Settles once ffmpeg has actually spawned; rejects if the spawn fails. */
   ready: Promise<void>
   /**
-   * Terminal ffmpeg failure (process error or nonzero exit), or null when the
-   * encoder finished cleanly. A force-kill from end() is not a failure — the
-   * container is still finalised on a best-effort basis and `killed` reports it.
+   * Terminal ffmpeg failure (process error, nonzero exit, or an unexpected
+   * signal), or null when the encoder finished cleanly. The force-kill from
+   * end() is not a failure — the container is still finalised on a best-effort
+   * basis and `killed` reports it.
    */
   failure: string | null
+}
+
+/**
+ * Describe an ffmpeg exit as a failure reason, or null when it finished
+ * acceptably. A signal death reports code === null: the SIGKILL from end() is
+ * expected — the container is finalised on a best-effort basis and `killed`
+ * reports it — but any other signal (the OOM killer, SIGSEGV, an external
+ * SIGTERM) leaves a truncated file that must not pass as a good recording.
+ */
+export function classifyFfmpegExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  forceKilled: boolean
+): string | null {
+  if (signal !== null) {
+    return forceKilled && signal === "SIGKILL" ? null : `ffmpeg terminated by ${signal}`
+  }
+  return code !== null && code !== 0 ? `ffmpeg exited with code ${code}` : null
 }
 
 export function createRecordingSink(
@@ -309,10 +328,11 @@ export function createRecordingSink(
     console.error(`[audio] ffmpeg stderr for ${serial}:`, data.toString().trim())
   })
 
-  proc.on("exit", (code) => {
-    if (code !== 0 && code !== null) {
-      console.error(`[audio] ffmpeg exited with code ${code} for ${serial}`)
-      failure ??= `ffmpeg exited with code ${code}`
+  proc.on("exit", (code, signal) => {
+    const reason = classifyFfmpegExit(code, signal, killed)
+    if (reason) {
+      console.error(`[audio] ${reason} for ${serial}`)
+      failure ??= reason
     }
     settleClosed()
   })
