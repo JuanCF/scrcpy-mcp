@@ -268,7 +268,8 @@ ADB is used **only** for things scrcpy's protocol doesn't cover:
 |--------|----------|---------|
 | `adb` | **Yes** | Android Debug Bridge — device communication, fallback control |
 | `scrcpy` | **Recommended** | Provides the scrcpy-server binary for fast input/screenshots |
-| `ffmpeg` | **Recommended** | Decodes H.264 video stream from scrcpy for screenshots |
+| `ffmpeg` | **Recommended** | Decodes H.264 video stream from scrcpy for screenshots; encodes audio recordings and `audio_capture` clips |
+| `ffplay` | **Optional** | MJPEG viewer window (`start_video_stream`) and host audio playback (`start_audio_stream`) |
 
 > **Without scrcpy/ffmpeg:** The server still works using ADB fallback for everything, but input is 10-50x slower and screenshots take ~500ms instead of ~33ms. With scrcpy installed, the server automatically uses the fast path.
 
@@ -442,7 +443,7 @@ All input tools use **scrcpy's control protocol natively** when a session is act
 
 | Category | scrcpy only | ADB only | Dual path* | Total |
 |---|---|---|---|---|
-| Session | 3 (start, stop, version) | 0 | 0 | 3 |
+| Session | 3 (start, stop, version†) | 0 | 0 | 3 |
 | Device Management | 4 (rotate, panels ×3) | 4 (list, info, WiFi connect/disconnect) | 2 (screen on/off) | 10 |
 | Vision | 0 | 2 (record start/stop) | 1 (screenshot) | 3 |
 | Video Streaming | 2 (MJPEG stream start/stop) | 0 | 0 | 2 |
@@ -457,7 +458,9 @@ All input tools use **scrcpy's control protocol natively** when a session is act
 
 *\* Dual-path tools use the scrcpy control protocol when a session is active and fall back to ADB otherwise. rotate_device, expand_notifications, expand_settings and collapse_panels have no ADB fallback — they require a scrcpy session.*
 
-**Total: 44 tools** (14 scrcpy-native, 17 ADB-only, 13 with ADB fallback)
+*† `version` does not use the scrcpy protocol — it only resolves which scrcpy-server version the session pushes. It is counted under "scrcpy only" because it is meaningless without scrcpy, but it is not a native-protocol tool.*
+
+**Total: 44 tools** (13 scrcpy-native, 1 scrcpy version lookup, 17 ADB-only, 13 with ADB fallback)
 
 
 ---
@@ -1544,7 +1547,7 @@ This would let users restrict what the AI can do.
 
 1. **scrcpy-first architecture** — uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots, with ADB as automatic fallback
 2. **npm publishable** — `npx scrcpy-mcp` just works, no cloning repos
-3. **Comprehensive tool set** — 44 tools (14 scrcpy-native, 17 ADB-only, 13 with dual path) covering session, vision, video streaming, input, apps, UI, shell, files, clipboard, device panels
+3. **Comprehensive tool set** — 44 tools (13 scrcpy-native, 1 scrcpy version lookup, 17 ADB-only, 13 with dual path) covering session, vision, video streaming, input, apps, UI, shell, files, clipboard, device panels
 4. **Image-returning screenshots** — the `screenshot` tool returns actual image content the AI can see (not just a file path)
 5. **Smart device selection** — auto-selects when one device is connected, clear errors otherwise
 6. **UI element finding** — `ui_find_element` returns tap coordinates, bridging the gap between "I see a button" and "tap at x,y"
@@ -1568,7 +1571,8 @@ This would let users restrict what the AI can do.
 | Requirement | How to install | Benefit |
 |-------------|---------------|---------|
 | **scrcpy** | https://github.com/Genymobile/scrcpy/releases | Faster screenshots via streaming |
-| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy streaming decode |
+| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy streaming decode, audio recording, and audio clip capture |
+| **ffplay** | Usually packaged with ffmpeg | Required for the MJPEG viewer window and audio playback |
 
 ### Device setup
 
@@ -1582,7 +1586,7 @@ This would let users restrict what the AI can do.
 
 ## Summary
 
-This plan produces a **44-tool MCP server** built on top of **scrcpy's binary control protocol** for near-instant input injection, screenshots, clipboard sync, panel control, app launching, screen management, and audio capture — with automatic ADB fallback when scrcpy is not available. 14 of the 44 tools use scrcpy's native protocol, 17 use ADB for things scrcpy doesn't handle, and 13 have both paths. The implementation is split into phases, with ADB-based functionality working after Phase 1, and the full scrcpy-first fast path after Phase 2. The package will be published to npm for easy `npx scrcpy-mcp` usage by the wider developer community.
+This plan produces a **44-tool MCP server** built on top of **scrcpy's binary control protocol** for near-instant input injection, screenshots, clipboard sync, panel control, app launching, screen management, and audio capture — with automatic ADB fallback when scrcpy is not available. 13 of the 44 tools use scrcpy's native protocol, 1 reports the scrcpy version, 17 use ADB for things scrcpy doesn't handle, and 13 have both paths. The implementation is split into phases, with ADB-based functionality working after Phase 1, and the full scrcpy-first fast path after Phase 2. The package will be published to npm for easy `npx scrcpy-mcp` usage by the wider developer community.
 
 **Estimated implementation time:** 6-8 hours for all phases (scrcpy binary protocol adds complexity).
 **Estimated package size:** <50KB (bundled).

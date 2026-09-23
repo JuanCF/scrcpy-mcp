@@ -163,6 +163,7 @@ If you need to configure custom options (such as pointing to a non-standard `scr
 |------|-------------|
 | `start_session` | Start a scrcpy session. When active, input and screenshots use the fast path (10-50x faster). |
 | `stop_session` | Stop the scrcpy session. Tools fall back to ADB. |
+| `version` | Report which scrcpy-server version the session pushes and where that version was resolved from. |
 
 `start_session` options:
 
@@ -212,6 +213,8 @@ turn audio on.
 | `expand_notifications` | Pull down the notification panel (requires active session) |
 | `expand_settings` | Pull down the quick settings panel (requires active session) |
 | `collapse_panels` | Collapse notification/settings panels (requires active session) |
+| `connect_wifi` | Enable WiFi ADB and connect to the device wirelessly. Returns the connection address. |
+| `disconnect_wifi` | Disconnect from a wireless ADB device |
 
 ### Vision
 
