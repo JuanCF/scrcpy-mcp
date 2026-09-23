@@ -2,7 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import * as fs from "fs"
 import * as path from "path"
-import { createRequire } from "module"
 import { resolveSerial } from "../utils/adb.js"
 import {
   getSession,
@@ -53,10 +52,11 @@ export const recordingSinks = new Map<string, ActiveRecording>()
  */
 export function finaliseRecording(
   serial: string,
-  reason: "user" | "maxDuration" | "deviceLost"
+  reason: "user" | "maxDuration" | "deviceLost",
+  expected?: ActiveRecording
 ): boolean {
   const rec = recordingSinks.get(serial)
-  if (!rec || rec.finalised) return false
+  if (!rec || rec.finalised || (expected && rec !== expected)) return false
   rec.finalised = true
   rec.stoppedReason = reason
   if (rec.timer) {
@@ -77,24 +77,38 @@ onAudioHubStopped((serial) => {
   finaliseRecording(serial, "deviceLost")
 })
 
-/**
- * Detect whether the installed MCP SDK advertises an `audio` content block.
- * The block has been in the MCP spec since the 2025-03-26 revision, but a
- * host pinned to an older SDK should be told why it is not getting the block.
- */
-function mcpSdkSupportsAudioBlock(): { supported: boolean; version: string } {
-  try {
-    const require = createRequire(import.meta.url)
-    const version = require("@modelcontextprotocol/sdk/package.json").version as string
-    const major = Number.parseInt(version.split(".")[0] ?? "0", 10)
-    return { supported: major >= 1 && !Number.isNaN(major), version }
-  } catch {
-    return { supported: false, version: "unknown" }
-  }
+type AudioSinkKind = "recording" | "playback" | "clip"
+
+// Each start tool awaits (session restart, free-space check, encoder spawn)
+// before its sink is attached, so "is one already running?" can't be answered
+// from the hub alone. A claim is taken synchronously up front and held until
+// the sink is attached, so a concurrent call for the same device backs off.
+const audioClaims = new Map<string, Set<AudioSinkKind>>()
+
+export function claimAudioSink(serial: string, kind: AudioSinkKind): boolean {
+  const claims = audioClaims.get(serial) ?? new Set<AudioSinkKind>()
+  if (claims.has(kind) || listAudioSinks(serial).includes(kind)) return false
+  claims.add(kind)
+  audioClaims.set(serial, claims)
+  return true
+}
+
+export function releaseAudioSink(serial: string, kind: AudioSinkKind): void {
+  const claims = audioClaims.get(serial)
+  if (!claims) return
+  claims.delete(kind)
+  if (claims.size === 0) audioClaims.delete(serial)
+}
+
+function otherAudioUsers(serial: string, kind: AudioSinkKind): string[] {
+  const users = new Set<string>([...listAudioSinks(serial), ...(audioClaims.get(serial) ?? [])])
+  users.delete(kind)
+  return Array.from(users)
 }
 
 async function ensureAudioSession(
   serial: string,
+  kind: AudioSinkKind,
   options: { audioSource?: AudioSourceName; audioDup?: boolean } = {}
 ): Promise<{ session: ScrcpySession; sessionRestarted: boolean }> {
   const s = await resolveSerial(serial)
@@ -111,6 +125,15 @@ async function ensureAudioSession(
     if (sourceMatch && dupMatch) {
       return { session, sessionRestarted: false }
     }
+  }
+
+  // Restarting stops the audio hub, which would silently cut off every other
+  // recording, stream, or clip on this device.
+  const others = otherAudioUsers(s, kind)
+  if (others.length > 0) {
+    throw new Error(
+      `audio is already in use on ${s} (${others.join(", ")}) with audioSource=${session?.options.audioSource ?? "output"}, audioDup=${session?.options.audioDup ?? false}; stop it first or request the same audioSource/audioDup`
+    )
   }
 
   const wasMjpegRunning = isMjpegServerRunning(s)
@@ -150,6 +173,13 @@ function deviceMuted(audioSource: AudioSourceName, audioDup: boolean): boolean {
 /** Bytes per second of raw PCM: 48000 Hz × 2 channels × 2 bytes/sample. */
 export const PCM_BYTES_PER_SECOND = 192000
 
+/** Bytes per second of an opus recording, matching `-b:a 96k` in createRecordingSink. */
+export const OPUS_BYTES_PER_SECOND = 12000
+
+export function recordingBudgetBytes(maxDuration: number, format: "wav" | "opus"): number {
+  return maxDuration * (format === "opus" ? OPUS_BYTES_PER_SECOND : PCM_BYTES_PER_SECOND)
+}
+
 export async function getAvailableBytes(dir: string): Promise<number> {
   try {
     const stat = await fs.promises.statfs(dir)
@@ -159,7 +189,7 @@ export async function getAvailableBytes(dir: string): Promise<number> {
   }
 }
 
-const audioSourceSchema = z.enum([
+const audioSourceEnum = z.enum([
   "output",
   "playback",
   "mic",
@@ -171,7 +201,9 @@ const audioSourceSchema = z.enum([
   "voice-call-uplink",
   "voice-call-downlink",
   "voice-performance",
-]).optional().default("output")
+])
+
+const audioSourceSchema = audioSourceEnum.optional().default("output")
 
 export function registerAudioTools(server: McpServer): void {
   server.registerTool(
@@ -204,6 +236,7 @@ export function registerAudioTools(server: McpServer): void {
       },
     },
     async ({ serial, localPath, format, maxDuration, audioSource, audioDup }) => {
+      let claimed: string | null = null
       try {
         if (!probeBinary("ffmpeg")) {
           return {
@@ -218,7 +251,21 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
         const s = await resolveSerial(serial)
-        const { session, sessionRestarted } = await ensureAudioSession(s, {
+        if (!claimAudioSink(s, "recording")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio recording is already in progress for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        claimed = s
+
+        const { session, sessionRestarted } = await ensureAudioSession(s, "recording", {
           audioSource,
           audioDup,
         })
@@ -236,21 +283,8 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
-        if (listAudioSinks(s).includes("recording")) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "error",
-                message: "An audio recording is already in progress for this device.",
-              }, null, 2),
-            }],
-            isError: true as const,
-          }
-        }
-
         const outputPath = localPath ?? defaultRecordingPath(format)
-        const requiredBytes = maxDuration * PCM_BYTES_PER_SECOND
+        const requiredBytes = recordingBudgetBytes(maxDuration, format)
         const outputDir = path.resolve(path.dirname(outputPath))
         const availableBytes = await getAvailableBytes(outputDir)
         if (availableBytes < requiredBytes) {
@@ -296,16 +330,16 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
-        const timer = setTimeout(() => {
-          finaliseRecording(s, "maxDuration")
-        }, maxDuration * 1000)
-
-        recordingSinks.set(s, {
+        const rec: ActiveRecording = {
           sink,
-          timer,
+          timer: null,
           stoppedReason: "user",
           finalised: false,
-        })
+        }
+        rec.timer = setTimeout(() => {
+          finaliseRecording(s, "maxDuration", rec)
+        }, maxDuration * 1000)
+        recordingSinks.set(s, rec)
 
         const structured = {
           status: "recording",
@@ -332,6 +366,8 @@ export function registerAudioTools(server: McpServer): void {
           }],
           isError: true as const,
         }
+      } finally {
+        if (claimed) releaseAudioSink(claimed, "recording")
       }
     }
   )
@@ -475,6 +511,7 @@ export function registerAudioTools(server: McpServer): void {
       },
     },
     async ({ serial, audioSource, audioDup }) => {
+      let claimed: string | null = null
       try {
         if (!probeBinary("ffplay")) {
           return {
@@ -489,7 +526,21 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
         const s = await resolveSerial(serial)
-        const { session, sessionRestarted } = await ensureAudioSession(s, {
+        if (!claimAudioSink(s, "playback")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio stream is already playing for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        claimed = s
+
+        const { session, sessionRestarted } = await ensureAudioSession(s, "playback", {
           audioSource,
           audioDup,
         })
@@ -501,19 +552,6 @@ export function registerAudioTools(server: McpServer): void {
               text: JSON.stringify({
                 status: "error",
                 message: "Audio capture is unavailable on this device (Android < 11 or capture failure).",
-              }, null, 2),
-            }],
-            isError: true as const,
-          }
-        }
-
-        if (listAudioSinks(s).includes("playback")) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "error",
-                message: "An audio stream is already playing for this device.",
               }, null, 2),
             }],
             isError: true as const,
@@ -575,6 +613,8 @@ export function registerAudioTools(server: McpServer): void {
           }],
           isError: true as const,
         }
+      } finally {
+        if (claimed) releaseAudioSink(claimed, "playback")
       }
     }
   )
@@ -645,11 +685,11 @@ export function registerAudioTools(server: McpServer): void {
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
         durationSeconds: z.number().int().positive().max(30).optional().describe("Capture duration in seconds (default 5; halved to 2.5 when libopus is unavailable and WAV fallback is used)"),
-        audioSource: audioSourceSchema.describe("Audio source"),
-        audioDup: z.boolean().optional().default(false).describe("Keep device playback audible when using playback source (Android 13+)"),
+        audioSource: audioSourceEnum.optional().describe("Audio source (default: the running audio session's source, so an active recording or stream is not interrupted; otherwise output)"),
+        audioDup: z.boolean().optional().describe("Keep device playback audible when using playback source (Android 13+; default: the running audio session's setting, otherwise false)"),
       },
       outputSchema: {
-        status: z.string().describe("Capture status"),
+        status: z.string().describe("Capture status: captured, or truncated when the device audio stream ended before the requested duration"),
         durationSeconds: z.number().describe("Actual captured duration in seconds"),
         sizeBytes: z.number().describe("Encoded clip size in bytes"),
         mimeType: z.string().describe("MIME type of the returned audio (audio/ogg or audio/wav)"),
@@ -666,8 +706,9 @@ export function registerAudioTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ serial, durationSeconds, audioSource, audioDup }) => {
+    async ({ serial, durationSeconds, audioSource: requestedSource, audioDup: requestedDup }) => {
       let cleanupHubStop: (() => void) | null = null
+      let claimed: string | null = null
       try {
         if (!probeBinary("ffmpeg")) {
           return {
@@ -683,7 +724,25 @@ export function registerAudioTools(server: McpServer): void {
         }
 
         const s = await resolveSerial(serial)
-        const { session, sessionRestarted } = await ensureAudioSession(s, {
+        if (!claimAudioSink(s, "clip")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio capture is already in progress for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        claimed = s
+
+        const current = getSession(s)
+        const currentOptions = current?.audioAvailable ? current.options : undefined
+        const audioSource = requestedSource ?? currentOptions?.audioSource ?? "output"
+        const audioDup = requestedDup ?? currentOptions?.audioDup ?? false
+        const { session, sessionRestarted } = await ensureAudioSession(s, "clip", {
           audioSource,
           audioDup,
         })
@@ -695,19 +754,6 @@ export function registerAudioTools(server: McpServer): void {
               text: JSON.stringify({
                 status: "error",
                 message: "Audio capture is unavailable on this device (Android < 11 or capture failure).",
-              }, null, 2),
-            }],
-            isError: true as const,
-          }
-        }
-
-        if (listAudioSinks(s).includes("clip")) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "error",
-                message: "An audio capture is already in progress for this device.",
               }, null, 2),
             }],
             isError: true as const,
@@ -805,31 +851,19 @@ export function registerAudioTools(server: McpServer): void {
         }
 
         const base64 = fileBuffer.toString("base64")
+        const capturedSeconds = pcmDurationSeconds(sink.pcmBytes)
+        const capturedText = `${capturedSeconds.toFixed(1)}s audio clip (${fileBuffer.length} bytes, ${sink.mimeType})`
         const structured = {
-          status: "captured",
-          durationSeconds: pcmDurationSeconds(sink.pcmBytes),
+          status: hubStoppedEarly ? "truncated" : "captured",
+          durationSeconds: capturedSeconds,
           sizeBytes: fileBuffer.length,
           mimeType: sink.mimeType,
           audioSource,
           deviceMuted: deviceMuted(audioSource, audioDup),
           sessionRestarted,
-          message: `Captured ${effectiveDuration}s audio clip (${fileBuffer.length} bytes, ${sink.mimeType}).`,
-        }
-
-        const { supported: audioSupported, version: sdkVersion } = mcpSdkSupportsAudioBlock()
-        if (!audioSupported) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                ...structured,
-                sdkVersion,
-                warning: "Installed MCP SDK does not support audio content blocks; returning metadata only.",
-              }, null, 2),
-            }],
-            structuredContent: structured,
-            isError: true as const,
-          }
+          message: hubStoppedEarly
+            ? `Captured only a ${capturedText} of the ${effectiveDuration}s requested: the device audio stream ended early (device lost or scrcpy session stopped).`
+            : `Captured ${capturedText}.`,
         }
 
         return {
@@ -853,6 +887,7 @@ export function registerAudioTools(server: McpServer): void {
         }
       } finally {
         cleanupHubStop?.()
+        if (claimed) releaseAudioSink(claimed, "clip")
       }
     }
   )

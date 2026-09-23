@@ -39,6 +39,10 @@ import {
   getAvailableBytes,
   recordingSinks,
   PCM_BYTES_PER_SECOND,
+  OPUS_BYTES_PER_SECOND,
+  recordingBudgetBytes,
+  claimAudioSink,
+  releaseAudioSink,
   type ActiveRecording,
 } from "../src/tools/audio.js"
 import { probeBinary } from "../src/utils/ffmpeg.js"
@@ -580,6 +584,61 @@ describe("finaliseRecording", () => {
     expect(rec.finalised).toBe(true)
     expect(sink.end).toHaveBeenCalledOnce()
   })
+
+  it("ignores a stale timer from an earlier recording on the same device", () => {
+    const oldSink = fakeRecordingSink()
+    const oldRec: ActiveRecording = {
+      sink: oldSink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: true,
+    }
+    const newSink = fakeRecordingSink()
+    startAudioHub("race-device", socket)
+    attachAudioSink("race-device", newSink)
+    const newRec: ActiveRecording = {
+      sink: newSink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: false,
+    }
+    recordingSinks.set("race-device", newRec)
+
+    expect(finaliseRecording("race-device", "maxDuration", oldRec)).toBe(false)
+    expect(newRec.finalised).toBe(false)
+    expect(newSink.end).not.toHaveBeenCalled()
+  })
+})
+
+describe("claimAudioSink", () => {
+  let socket: net.Socket
+
+  beforeEach(() => {
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
+  })
+
+  afterEach(() => {
+    releaseAudioSink("claim-device", "clip")
+    releaseAudioSink("claim-device", "recording")
+    stopAudioHub("claim-device")
+  })
+
+  it("refuses a second claim of the same kind until released", () => {
+    expect(claimAudioSink("claim-device", "clip")).toBe(true)
+    expect(claimAudioSink("claim-device", "clip")).toBe(false)
+    expect(claimAudioSink("claim-device", "recording")).toBe(true)
+    releaseAudioSink("claim-device", "clip")
+    expect(claimAudioSink("claim-device", "clip")).toBe(true)
+  })
+
+  it("refuses a claim while a sink of that kind is attached", () => {
+    startAudioHub("claim-device", socket)
+    attachAudioSink("claim-device", { id: "clip", write: () => {}, end: () => {} })
+    expect(claimAudioSink("claim-device", "clip")).toBe(false)
+  })
 })
 
 describe("getAvailableBytes", () => {
@@ -605,6 +664,12 @@ describe("recording size budget", () => {
   it("budgets maxDuration × 192000 bytes", () => {
     expect(PCM_BYTES_PER_SECOND).toBe(192000)
     expect(300 * PCM_BYTES_PER_SECOND).toBe(57600000)
+  })
+
+  it("budgets opus at its 96 kbps bitrate rather than raw PCM", () => {
+    expect(OPUS_BYTES_PER_SECOND).toBe(12000)
+    expect(recordingBudgetBytes(3600, "opus")).toBe(43200000)
+    expect(recordingBudgetBytes(3600, "wav")).toBe(691200000)
   })
 })
 
