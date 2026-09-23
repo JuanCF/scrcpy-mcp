@@ -64,7 +64,7 @@ src/
 │   └── constants.ts   # Shared constants (protocol types, env vars, keycodes)
 └── tools/
     ├── apps.ts        # App management (start, stop, install, uninstall, list, current)
-    ├── audio.ts       # Audio streaming and recording tools
+    ├── audio.ts       # Audio streaming, recording, and clip capture tools
     ├── clipboard.ts   # Clipboard get/set (scrcpy + ADB fallback)
     ├── device.ts      # Device management (list, info, screen, panels, rotation, WiFi)
     ├── files.ts       # File push/pull/list

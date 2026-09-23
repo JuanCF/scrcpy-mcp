@@ -271,7 +271,7 @@ ADB is used **only** for things scrcpy's protocol doesn't cover:
 | `ffmpeg` | **Recommended** | Decodes H.264 video stream from scrcpy for screenshots; encodes audio recordings and `audio_capture` clips |
 | `ffplay` | **Optional** | MJPEG viewer window (`start_video_stream`) and host audio playback (`start_audio_stream`) |
 
-> **Without scrcpy/ffmpeg:** The server still works using ADB fallback for everything, but input is 10-50x slower and screenshots take ~500ms instead of ~33ms. With scrcpy installed, the server automatically uses the fast path.
+> **Without scrcpy/ffmpeg:** ADB-only and dual-path tools remain available, but session management, rotation and panel controls, video streaming, and audio streaming, recording and capture require scrcpy. ADB input is 10-50x slower and screenshots take ~500ms instead of ~33ms. With scrcpy installed, the server automatically uses the fast path.
 
 ---
 
@@ -1540,7 +1540,7 @@ This would let users restrict what the AI can do.
 |---------|-------|----------|----------|-------------------|
 | [mobile-mcp](https://github.com/mobile-next/mobile-mcp) | 3,400+ | TypeScript | iOS + Android via custom protocol | We focus specifically on scrcpy/ADB. Simpler setup, no custom agent needed. |
 | [android-mcp-server](https://github.com/minhalvp/android-mcp-server) | 660+ | Python | ADB only | We're in TypeScript (faster startup), include scrcpy integration, and plan npm distribution. |
-| [adb-mcp](https://github.com/srmorete/adb-mcp) | 33 | TypeScript | ADB basic | We have more tools (29 vs ~10), UI element finding, image return for screenshots. |
+| [adb-mcp](https://github.com/srmorete/adb-mcp) | 33 | TypeScript | ADB basic | We have more tools (44 vs ~10), UI element finding, image return for screenshots. |
 | [mcp-scrcpy-vision](https://github.com/invidtiv/mcp-scrcpy-vision) | 7 | TypeScript | scrcpy streaming + ADB | Similar scope. We aim for simpler setup (scrcpy optional, not required) and better docs. |
 
 ### Our advantages
