@@ -1,5 +1,7 @@
-import { spawn, ChildProcess } from "child_process"
+import { spawn, ChildProcess, execFileSync } from "child_process"
+import * as fs from "fs"
 import * as net from "net"
+import * as os from "os"
 import * as path from "path"
 import {
   AUDIO_SAMPLE_RATE,
@@ -7,7 +9,7 @@ import {
   AUDIO_SAMPLE_FORMAT,
   AUDIO_BYTES_PER_SAMPLE,
 } from "./constants.js"
-import { findFfmpeg, findFfplay } from "./ffmpeg.js"
+import { findFfmpeg, findFfplay, probeBinary } from "./ffmpeg.js"
 
 export interface AudioSink {
   id: string
@@ -31,8 +33,11 @@ const hubs = new Map<string, HubEntry>()
 
 const hubStopListeners = new Set<(serial: string) => void>()
 
-export function onAudioHubStopped(listener: (serial: string) => void): void {
+export function onAudioHubStopped(listener: (serial: string) => void): () => void {
   hubStopListeners.add(listener)
+  return () => {
+    hubStopListeners.delete(listener)
+  }
 }
 
 export function startAudioHub(
@@ -391,6 +396,173 @@ export function createRecordingSink(
       proc.on("exit", () => {
         clearTimeout(killTimer)
       })
+    },
+  }
+}
+
+export interface ClipSink extends AudioSink {
+  outputPath: string
+  mimeType: "audio/ogg" | "audio/wav"
+  format: "ogg" | "wav"
+  closed: Promise<void>
+  killed: boolean
+  /** Raw PCM bytes delivered to ffmpeg — the basis for the duration report. */
+  pcmBytes: number
+  /** Settles once ffmpeg has actually spawned; rejects if the spawn fails. */
+  ready: Promise<void>
+  /** Terminal ffmpeg failure, or null when the encoder finished cleanly. */
+  failure: string | null
+  /** Read the encoded temp file and delete it; rejects if the file is empty or unreadable. */
+  collect(): Promise<Buffer>
+}
+
+/**
+ * Probe whether the resolved ffmpeg binary includes the libopus encoder. Used
+ * by createClipSink because opus-in-ogg is its default path (D9).
+ */
+export function ffmpegHasLibopus(): boolean {
+  const ffmpegPath = probeBinary("ffmpeg")
+  if (!ffmpegPath) return false
+  try {
+    const output = execFileSync(ffmpegPath, ["-encoders"], {
+      encoding: "utf8",
+      timeout: 5000,
+    })
+    return output.includes("libopus")
+  } catch {
+    return false
+  }
+}
+
+export function createClipSink(serial: string, forceFormat?: "ogg" | "wav"): ClipSink {
+  const hasLibopus = forceFormat === undefined ? ffmpegHasLibopus() : forceFormat === "ogg"
+  const format: "ogg" | "wav" = hasLibopus ? "ogg" : "wav"
+  const mimeType = format === "ogg" ? "audio/ogg" : "audio/wav"
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const outputPath = path.join(os.tmpdir(), `scrcpy-mcp-audio-clip-${serial}-${timestamp}.${format}`)
+
+  const encoderArgs = format === "ogg"
+    ? ["-c:a", "libopus", "-b:a", "48k"]
+    : ["-c:a", "pcm_s16le"]
+
+  const proc = spawn(findFfmpeg(), [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-nostats",
+    "-f", AUDIO_SAMPLE_FORMAT,
+    "-ar", String(AUDIO_SAMPLE_RATE),
+    "-ac", String(AUDIO_CHANNELS),
+    "-i", "pipe:0",
+    ...encoderArgs,
+    "-y", outputPath,
+  ])
+
+  let resolveClosed: (() => void) | null = null
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve
+  })
+
+  let finalised = false
+  let killed = false
+  let pcmBytes = 0
+  let failure: string | null = null
+
+  const settleClosed = () => {
+    if (!finalised) {
+      finalised = true
+      resolveClosed?.()
+    }
+  }
+
+  const ready = new Promise<void>((resolve, reject) => {
+    proc.once("spawn", () => resolve())
+    proc.once("error", reject)
+  })
+  proc.on("error", (err) => {
+    console.error(`[audio] ffmpeg process error for ${serial}:`, err.message)
+    failure ??= `ffmpeg process error: ${err.message}`
+    settleClosed()
+  })
+
+  proc.stderr?.on("data", (data: Buffer) => {
+    console.error(`[audio] ffmpeg stderr for ${serial}:`, data.toString().trim())
+  })
+
+  proc.on("exit", (code, signal) => {
+    const reason = classifyFfmpegExit(code, signal, killed)
+    if (reason) {
+      console.error(`[audio] ${reason} for ${serial}`)
+      failure ??= reason
+    }
+    settleClosed()
+  })
+
+  const stdin = proc.stdin
+  let backpressured = false
+  if (stdin) {
+    stdin.on("drain", () => {
+      backpressured = false
+    })
+    stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE") {
+        console.error(`[audio] ffmpeg stdin EPIPE for ${serial}`)
+      } else {
+        console.error(`[audio] ffmpeg stdin error for ${serial}:`, err.message)
+      }
+    })
+  }
+
+  return {
+    id: "clip",
+    outputPath,
+    mimeType,
+    format,
+    get killed() { return killed },
+    get pcmBytes() { return pcmBytes },
+    get failure() { return failure },
+    closed,
+    ready,
+    write: (chunk: Buffer) => {
+      if (backpressured) return
+      if (stdin && !stdin.destroyed) {
+        try {
+          pcmBytes += chunk.length
+          if (!stdin.write(chunk)) {
+            backpressured = true
+            console.error(`[audio] ffmpeg stdin backpressured for ${serial}; dropping audio until drain`)
+          }
+        } catch { /* EPIPE handled above */ }
+      }
+    },
+    end: () => {
+      if (finalised) return
+      if (stdin && !stdin.destroyed) {
+        stdin.end()
+      }
+      const killTimer = setTimeout(() => {
+        if (!finalised && proc && !proc.killed) {
+          killed = true
+          proc.kill("SIGKILL")
+        }
+      }, 2000)
+      proc.on("exit", () => {
+        clearTimeout(killTimer)
+      })
+    },
+    collect: async () => {
+      await closed
+      let buf: Buffer
+      try {
+        buf = await fs.promises.readFile(outputPath)
+      } catch (err) {
+        await fs.promises.unlink(outputPath).catch(() => {})
+        throw err
+      }
+      await fs.promises.unlink(outputPath).catch(() => {})
+      if (buf.length === 0) {
+        throw new Error("Audio capture produced an empty clip")
+      }
+      return buf
     },
   }
 }

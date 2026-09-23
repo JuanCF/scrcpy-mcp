@@ -1,7 +1,8 @@
 # Audio Streaming — Implementation Plan
 
-> Adds device audio capture to scrcpy-mcp: local playback, recording to file, and
-> (optionally) a single synced audio+video viewer.
+> Adds device audio capture to scrcpy-mcp: local playback, recording to file,
+> clips returned to the agent, and (optionally) a single synced audio+video
+> viewer.
 
 Companion to [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md) (tracked as Phase 6.2).
 
@@ -18,17 +19,20 @@ Companion to [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md) (tracked as Phase 6
 7. [Phase C — Recording to File](#7-phase-c--recording-to-file)
 8. [Phase D — Frame-Meta Support](#8-phase-d--frame-meta-support)
 9. [Phase E — Synced A/V Viewer](#9-phase-e--synced-av-viewer)
-10. [Testing Strategy](#10-testing-strategy)
-11. [Documentation Updates](#11-documentation-updates)
-12. [Risks & Open Questions](#12-risks--open-questions)
-13. [Task Checklist](#13-task-checklist)
+10. [Phase F — Agent-Facing Capture](#10-phase-f--agent-facing-capture)
+11. [Phase G — Robustness & Limits](#11-phase-g--robustness--limits)
+12. [Testing Strategy](#12-testing-strategy)
+13. [Documentation Updates](#13-documentation-updates)
+14. [Risks & Open Questions](#14-risks--open-questions)
+15. [Task Checklist](#15-task-checklist)
 
 ---
 
 ## 1. Scope & Deliverables
 
-Five phases, each independently shippable. A–C deliver the feature; D–E are the
-expensive follow-ups and are explicitly optional.
+Seven phases, each independently shippable. A–C deliver the feature and have
+shipped; F and G close the gaps that shipping exposed; D–E are the expensive
+follow-ups and remain explicitly optional.
 
 | Phase | Deliverable | Depends on | Est. |
 |-------|-------------|-----------|------|
@@ -37,13 +41,26 @@ expensive follow-ups and are explicitly optional.
 | **C** | `audio_record_start` / `audio_record_stop` — capture to `.wav` / `.opus` on the host | A | 1–2 h |
 | **D** | `send_frame_meta=true` support (12-byte packet headers, 3.x/4.x flag bits) | A | 2–3 h |
 | **E** | Single synced audio+video viewer (replaces the silent MJPEG window) | D | 3–4 h |
+| **F** | `audio_capture` — a bounded clip returned to the *agent* as an MCP audio content block | A | 2–3 h |
+| **G** | Recording limits (`maxDuration`, size ceiling, free-space check) + mid-capture device loss | A | 2–3 h |
 
-**Committed scope:** build **A, then C, then B**. D and E are deferred until the
-feature has been used in anger — see [D6](#d6--build-order-recording-before-playback)
-and [Deferred Decisions](#deferred-decisions). Phase letters stay as lettered above
+**Shipped:** A → C → B. See the [Task Checklist](#15-task-checklist) for what
+remains outstanding from that delivery.
+
+**Committed next: F, then G.** Both depend only on A, and neither waits on D or
+E. F is the capability the project's own premise asks for — this server exists to
+give an agent vision and control, and after A–C audio reaches the host's speakers
+and the host's disk but never the agent. G bounds what C deliberately left
+unbounded and handles the device vanishing mid-capture.
+
+D and E stay deferred until the feature has been used in anger — see
+[D6](#d6--build-order-recording-before-playback) and
+[Deferred Decisions](#deferred-decisions). Phase letters stay as lettered above
 throughout this document; only the build order differs.
 
-**Non-goals:** injecting audio *into* the device; browser-based audio; transcription.
+**Non-goals:** injecting audio *into* the device; browser-based audio;
+transcription (F hands the model the audio itself — what it does with it is the
+model's business, not this server's).
 
 ---
 
@@ -82,7 +99,7 @@ the audio header's shape.
 
 | Decision | Choice | Detail |
 |----------|--------|--------|
-| Scope | A + C + B now; D + E deferred | [§1](#1-scope--deliverables) |
+| Scope | A + C + B shipped; F + G next; D + E deferred | [§1](#1-scope--deliverables) |
 | Build order | A → C → B | [D6](#d6--build-order-recording-before-playback) |
 | Default audio source | `output` — captures everything, mutes the device | [D1](#d1--audio-is-opt-in-never-on-by-default) |
 | `audio` in `start_session` | never defaults to `true` | [D1](#d1--audio-is-opt-in-never-on-by-default) |
@@ -93,6 +110,8 @@ the audio header's shape.
 | Tool naming | mirror each neighbour; rename nothing | [D7](#d7--tool-names-mirror-their-neighbours) |
 | Where recordings land | the host filesystem | [D8](#d8--recording-is-host-side-wav-by-default) |
 | Default recording format | `.wav`; opus opt-in | [D8](#d8--recording-is-host-side-wav-by-default) |
+| Getting audio to the agent | a bounded clip, not a stream | [D9](#d9--the-agent-gets-a-clip-not-a-stream) |
+| Unbounded captures | every capture gets a ceiling | [D10](#d10--every-capture-is-bounded) |
 
 ### D1 — Audio is opt-in, never on by default
 
@@ -198,7 +217,7 @@ consistency wins; revisit only at a major version.
 
 ### D8 — Recording is host-side, WAV by default
 
-**Host-side.** Unlike `screen_record_*`, which records on the device and
+**Host-side.** Unlike `screen_record_*`, which records **on the device** and
 optionally pulls, audio records straight to the host filesystem — the PCM bytes
 are already on the host, so round-tripping them through `/sdcard` and back would
 be pure overhead. The asymmetry is deliberate and must be stated in the tool
@@ -210,6 +229,48 @@ compiled into the host's ffmpeg, which is not guaranteed and fails at record tim
 rather than at validation time. Fidelity and reliability beat file size for a
 capture that is typically seconds to minutes long; `format: "opus"` is available
 for anyone who wants it.
+
+### D9 — The agent gets a clip, not a stream
+
+Phases B and C both end on the host: the speakers, or a file. Neither puts audio
+where this server's actual consumer can reach it. `screenshot` hands the model a
+base64 `image` block; there is no equivalent for sound, so an agent can capture
+audio and still not hear it. The ROADMAP's "transcribe device audio from a
+captured `.wav`" idea is a workaround for that gap, not a feature in its own
+right.
+
+MCP's content model has carried an `audio` block since the 2025-03-26 revision,
+shaped exactly like `image` (`data` + `mimeType`). Phase F uses it: attach a sink
+for `durationSeconds`, encode, return the bytes inline.
+
+**Chosen: a bounded clip, not a stream.** A tool call is request/response — there
+is no way to hand a model a continuous feed, and no reason to want one, since it
+consumes a fixed clip in a single turn. The rejected alternative was *make
+`audio_record_stop` return the file inline too*: it conflates two jobs, since
+recording is deliberately host-side (D8) and recordings run to minutes and
+megabytes.
+
+Two consequences the implementation must respect:
+
+- **Encode; never ship raw PCM inline.** Ten seconds of S16LE/48k/stereo is
+  1.9 MB, which is ~2.6 MB of base64 in the context window. Opus in an ogg
+  container is ~0.1 MB for the same ten seconds.
+- **The call blocks for its whole duration.** A hard cap in the schema is what
+  keeps that honest (R10).
+
+### D10 — Every capture is bounded
+
+`screen_record_start` takes `maxDuration` and the device enforces it (~180 s).
+`audio_record_start` takes nothing: the hub writes 192 KB/s to the host until
+someone calls `audio_record_stop`. An agent that forgets the stop call — or dies
+between the two — leaves ffmpeg writing ~11 MB/min until the disk fills. R4
+covers ADB bandwidth; nothing covered host disk.
+
+⇒ Phase G gives every capture a ceiling: a `maxDuration` default of 300 s, a size
+budget derived from it, and a free-space check before ffmpeg is spawned. Hitting
+a ceiling **finalises the file cleanly** and reports
+`stoppedReason: "maxDuration"` — the caller gets the same bytes they would have
+got, just with an end on them.
 
 ### Deferred Decisions
 
@@ -239,13 +300,14 @@ device ──h264──▶ videoSocket ──▶ [Node] ──▶ ffmpeg (h264�
                                                                         ffplay (silent)
 ```
 
-**Target after Phase B/C** — audio is a second, parallel pipeline out of the
-host's default sink:
+**Target after Phases B/C, plus F** — audio is a second, parallel pipeline; the
+hub fans one socket out to the host's speakers, the host's disk, and the agent:
 
 ```
 device ──h264───▶ videoSocket ──▶ [Node] ──▶ ffmpeg ──▶ frameBuffer ──▶ MJPEG :7183 ──▶ ffplay (silent)
        ──pcm────▶ audioSocket ──▶ [AudioHub] ──┬──▶ ffplay -nodisp        (host speakers)
-                                               └──▶ ffmpeg ──▶ capture.wav / .opus
+                                               ├──▶ ffmpeg ──▶ capture.wav / .opus
+                                               └──▶ ffmpeg ──▶ clip.ogg ──▶ base64 ▶ MCP audio block   (Phase F)
        ◀─control─ controlSocket
 ```
 
@@ -613,7 +675,123 @@ consumer; it does not replace the MJPEG path.
 
 ---
 
-## 10. Testing Strategy
+## 10. Phase F — Agent-Facing Capture
+
+**Where it comes out:** the MCP response itself, as an `audio` content block —
+the third destination, next to Phase B's speakers and Phase C's file. Rationale
+and the shape of the choice are in [D9](#d9--the-agent-gets-a-clip-not-a-stream).
+
+### F.1 `createClipSink` (`src/utils/audio.ts`)
+
+The same ffmpeg shape as `createRecordingSink`, writing to a temp file under the
+OS temp dir instead of a caller-supplied path, then read back and base64-encoded:
+
+```ts
+spawn(findFfmpeg(), [
+  "-hide_banner", "-loglevel", "error",
+  "-f", AUDIO_SAMPLE_FORMAT, "-ar", String(AUDIO_SAMPLE_RATE),
+  "-ac", String(AUDIO_CHANNELS), "-i", "pipe:0",
+  "-c:a", "libopus", "-b:a", "48k",
+  "-y", tmpPath,                      // .ogg
+])
+```
+
+Reuse C.1's graceful-stdin-close discipline verbatim — a force-killed encoder
+yields a truncated clip. Delete the temp file in a `finally`, on the error paths
+as well as the happy one.
+
+**libopus fallback.** D8 treats a missing libopus as an opt-in risk; here it sits
+on the default path. If the encoder is unavailable, fall back to `wav` and halve
+the default duration so the content block stays manageable, and report which one
+was used in `mimeType`.
+
+### F.2 `audio_capture` (`src/tools/audio.ts`)
+
+- Input: `serial?`, `durationSeconds?` (default `5`, `.int().positive().max(30)`), `audioSource?`, `audioDup?`
+- Description must carry the same muting warning as the other audio tools (D1), plus: *"Returns the audio to the caller as an audio content block — use audio_record_start to write a long capture to a file on the host instead."*
+- Flow: `ensureAudioSession` → attach the clip sink → wait `durationSeconds` → detach → read → base64
+- Output: `status`, `durationSeconds`, `sizeBytes`, `mimeType` (`audio/ogg` or `audio/wav`), `audioSource`, `deviceMuted`, `sessionRestarted`, `message`
+- Annotations: `readOnlyHint: false` (the default source mutes the device), `idempotentHint: false`, `openWorldHint: true`
+
+Return **two** content blocks, so a client that ignores audio still gets
+something useful (R9):
+
+```ts
+return {
+  content: [
+    { type: "audio" as const, data: base64, mimeType },
+    { type: "text" as const, text: JSON.stringify(structured, null, 2) },
+  ],
+  structuredContent: structured,
+}
+```
+
+This is the first non-`image` binary content block in the server; `screenshot`
+(`src/tools/vision.ts`) is the pattern to follow for the base64 handling, and the
+response-format table in AGENTS.md needs the `audio` row added (§13).
+
+### F.3 Coexistence with the other sinks
+
+The hub already fans out to every attached sink (D4), so a capture taken during
+an active recording or playback is fine by construction — and must be tested as
+such rather than assumed, since it is the first case where two encoder sinks run
+at once.
+
+---
+
+## 11. Phase G — Robustness & Limits
+
+A–C are correct while everything works. G covers the two cases they don't: a
+capture nobody stops, and a device that disappears mid-capture.
+
+### G.1 Bounded recordings
+
+`audio_record_start` gains:
+
+- `maxDuration?` — seconds, `.int().positive().max(3600)`, default `300`. Nothing
+  device-side enforces this (unlike `screen_record_*`, where the device does), so
+  a host-side timer detaches the sink and finalises the file by exactly the path
+  `audio_record_stop` uses.
+- A size budget of `maxDuration × 192 KB/s`, checked against free space on the
+  target volume **before** ffmpeg is spawned. Refuse up front, quoting both
+  numbers, rather than discovering it when the disk fills.
+
+`audio_record_stop` gains `stoppedReason: "user" | "maxDuration" | "deviceLost"`.
+A stop that arrives after an auto-finalise returns the completed file rather than
+"no recording is in progress" — the recording happened; only the stop call was
+late.
+
+### G.2 Mid-capture device loss
+
+A.7 covers orderly teardown through `stop_session`. Not covered: a USB unplug,
+`adb disconnect`, an Android 11 screen lock after the session started, or the
+audio socket ending while video survives.
+
+`onAudioHubStopped` (`src/utils/audio.ts:34`) is already the hook — it fires when
+the hub tears down. G makes every sink answer it:
+
+- **Recording:** finalise the partial file and keep it, with
+  `stoppedReason: "deviceLost"`. Never discard bytes already captured.
+- **Playback:** close ffplay's stdin so it exits via `-autoexit` instead of
+  lingering as an orphan.
+- **Clip (F):** resolve the pending capture with whatever was collected if that
+  is a usable length; error if it is not.
+
+`audio_record_stop` and `stop_audio_stream` then report the loss, instead of
+reporting on a sink that quietly died.
+
+### G.3 Resolve R6 properly
+
+A.0 — *resolve R6 on a real device before writing code* — was never ticked, and
+A–C shipped anyway. The question is still open on paper: does a terminating audio
+thread tear down the whole scrcpy server? G.2 is where the answer changes
+behaviour, so close it here. Verify on a real Android 11 device and on an
+emulator with no audio; then either retire R6 or build the separate-session
+fallback it warns about.
+
+---
+
+## 12. Testing Strategy
 
 ### Unit (`tests/audio.test.ts`, `tests/scrcpy-protocol.test.ts`)
 
@@ -624,6 +802,8 @@ Follow the existing pure-function discipline — no device required:
 - `AudioHub`: chunks reach every attached sink; a detached sink stops receiving; zero sinks doesn't throw; a throwing sink is detached without disturbing the others
 - Recording duration math from byte count
 - Phase D: `frameMetaLayout` flag bits differ between 3.x and 4.x
+- Phase F: clip duration/size math; the opus→wav fallback reports the matching `mimeType`; the temp file is deleted on success, on encoder failure, and on device loss
+- Phase G: the `maxDuration` timer finalises exactly once even when `audio_record_stop` races it; the free-space refusal fires *before* ffmpeg is spawned; every sink type detaches cleanly from `onAudioHubStopped`
 
 ### Integration (`tests/integration/audio.test.ts`)
 
@@ -635,6 +815,10 @@ devices legitimately have no audio.
 - After restart, `tap` still works (control socket re-established) and `screenshot` still returns an image
 - `audio_record_start` → ~3 s → `audio_record_stop` produces a file whose size is within ±20 % of `3 × 192000` bytes
 - `stop_audio_stream` with nothing attached returns an error response, not a throw
+- Phase F: `audio_capture` returns a block with `type: "audio"` whose `data` decodes to a non-empty ogg of about the requested length
+- Phase F: a capture taken during an active recording leaves that recording intact (hub fan-out, F.3)
+- Phase G: `maxDuration: 2` finalises the file with no stop call and reports `stoppedReason: "maxDuration"`
+- Phase G: `adb disconnect` mid-recording keeps a playable partial file and reports `stoppedReason: "deviceLost"`
 
 ### Manual
 
@@ -642,10 +826,13 @@ devices legitimately have no audio.
 2. Repeat with `audioSource: "playback"`, `audioDup: true` on an Android 13+ device → both audible
 3. Android 11 with the screen locked at session start → expect `disabled`, session still fully usable
 4. `stop_session` while playback runs → ffplay exits, no orphan processes (`pgrep ffplay`)
+5. Phase G: pull the USB cable mid-recording → the partial `.wav` is playable, no orphan encoder (`pgrep ffmpeg`)
 
 ---
 
-## 11. Documentation Updates
+## 13. Documentation Updates
+
+Done for A–C:
 
 - **README.md** — bump the tool count (36 → 40); add audio to Features; new tool-reference rows; prerequisites note (**Android 11+**, ffplay for playback); a short "Audio" section carrying the muting warning prominently
 - **AGENTS.md** — add `audio.ts` to both the `utils/` and `tools/` trees in Project Structure
@@ -653,9 +840,16 @@ devices legitimately have no audio.
 - **PLAN.md** — extend the tool inventory in §5
 - **AUDIO_PLAN.md** — this file
 
+Still owed by F and G:
+
+- **README.md** — tool count 40 → 41 for `audio_capture`; a row in the audio table; note the `maxDuration` default on `audio_record_start`
+- **AGENTS.md** — add the `audio` block to the Tool Response Format list, which currently shows only `text` and `image`
+- **PLAN.md** — §5.3c becomes 5 tools; update the inventory total in the table at the end of §5
+- **ROADMAP.md** — 6.2.6 and 6.2.7
+
 ---
 
-## 12. Risks & Open Questions
+## 14. Risks & Open Questions
 
 | # | Risk | Mitigation |
 |---|------|-----------|
@@ -664,20 +858,24 @@ devices legitimately have no audio.
 | R3 | Android < 11 has no audio at all. | Header sentinel `0` handled as a normal degraded path; never fails the session. |
 | R4 | 192 KB/s continuous over ADB — fine on USB, heavy on Wi-Fi ADB. | Documented; Phase D's opus support is the fix. |
 | R5 | Headless host (container, CI, SSH) has no audio sink — ffplay fails. | Detect spawn failure, detach, return an actionable message. Recording (Phase C) still works there. |
-| R6 | **Open question:** does a non-fatal audio-thread termination tear down the whole server? `AudioRawRecorder` calls `listener.onTerminated(false)`, and `Completion` stops the server when all processors finish. | **Verify first in A.6** on a real Android 11 device and on an emulator with no audio: confirm video + control survive. If they don't, audio must run in a *separate* scrcpy session — which would change A.7 substantially. Resolve before writing Phase B. |
+| R6 | **Open question:** does a non-fatal audio-thread termination tear down the whole server? `AudioRawRecorder` calls `listener.onTerminated(false)`, and `Completion` stops the server when all processors finish. | **Still open.** A.0 said resolve it before Phase B; A–C shipped without it being recorded as done. Now owned by [G.3](#g3-resolve-r6-properly): verify on a real Android 11 device and on an emulator with no audio, confirming video + control survive. If they don't, audio must run in a *separate* scrcpy session — which would change A.7 substantially. |
 | R7 | Phase B has no A/V sync. | Accepted (D5); Phase E is the answer if it matters. |
 | R8 | Phase D flips a global flag and touches the working video path. | Gate behind a flag; re-verify the first-frame/PositionMapper handshake, since a regression there silently breaks `tap`. |
+| R9 | Not every MCP client renders `audio` content blocks. | `audio_capture` returns a paired `text` block with the JSON, so a client that drops the audio still gets the metadata and the error path (F.2). |
+| R10 | `audio_capture` blocks for its full duration. | Hard `.max(30)` in the schema and a 5 s default, so a mistyped duration can't stall an automation run (D9). |
+| R11 | Base64 audio is expensive in context. | Opus by default (~0.1 MB for 10 s); duration capped; raw PCM is never returned inline (D9). |
+| R12 | In Phase G a `maxDuration` timer and a user stop can race. | One finalise path, guarded so it runs exactly once, whichever arrives first; unit-tested (G.1). |
 
 ---
 
-## 13. Task Checklist
+## 15. Task Checklist
 
-**Build order: A → C → B.** D and E are deferred (see the Decisions Log). Sections
-below stay in letter order for cross-referencing.
+**Build order: A → C → B** (shipped), then **F → G**. D and E are deferred (see
+the Decisions Log). Sections below stay in letter order for cross-referencing.
 
 ### Phase A — Transport Foundation
 
-- [ ] A.0 **Resolve R6** on a real device before writing code
+- [ ] A.0 **Resolve R6** on a real device — **still open**; A–C shipped without it. Now owned by [G.3](#g3-resolve-r6-properly)
 - [x] A.1 Add audio constants to `src/utils/constants.ts`
 - [x] A.2 Extend `ScrcpySessionOptions` and `ScrcpySession`
 - [x] A.3 Add audio args to `buildServerArgs`, replacing the hardcoded `audio=false`
@@ -701,6 +899,20 @@ below stay in letter order for cross-referencing.
 - [x] C.2 `audio_record_start` / `audio_record_stop`
 - [x] C.3 Duration/size math + tests
 
+### Phase F — Agent-Facing Capture
+
+- [x] F.1 `createClipSink` — temp-file encode, guaranteed cleanup, opus→wav fallback
+- [x] F.2 `audio_capture` returning paired `audio` + `text` content blocks
+- [x] F.3 Register in `src/index.ts`; verify coexistence with an active recording/playback sink
+- [x] F.4 Unit tests (clip math, fallback `mimeType`, temp-file cleanup) + integration test
+
+### Phase G — Robustness & Limits *(next)*
+
+- [ ] G.1 `maxDuration` (default 300 s), size budget, pre-flight free-space check, `stoppedReason`
+- [ ] G.2 Every sink handles `onAudioHubStopped`: finalise partials, no orphan processes
+- [ ] G.3 **Resolve R6** — real Android 11 device + audio-less emulator; retire R6 or build the separate-session fallback
+- [ ] G.4 Unit tests (timer/stop race, free-space refusal) + integration tests + manual check 5
+
 ### Phase D — Frame Meta *(optional)*
 
 - [ ] D.1 Frame-meta constants for 3.x and 4.x
@@ -715,9 +927,16 @@ below stay in letter order for cross-referencing.
 - [ ] E.3 `start_av_stream` / `stop_av_stream`
 - [ ] E.4 Confirm MJPEG + screenshots unaffected
 
-### Ship
+### Ship — A–C
+
+- [x] `npm run lint` · `npm run build` · `npm run test` — clean, 211 unit tests passing (2026-09-22)
+- [ ] `npm run inspect` — verify the new tools; not recorded as run
+- [x] README / AGENTS / PLAN / ROADMAP updates — README Audio section + 40-tool count, AGENTS `audio.ts` in both trees, PLAN §5.3c, ROADMAP 6.2.1–6.2.3
+- [ ] Version bump + changelog — **outstanding**: audio landed in #62, *after* the v0.5.0 release (#61), so `package.json` is still `0.5.0` and the feature is unreleased
+
+### Ship — F + G
 
 - [ ] `npm run lint` · `npm run build` · `npm run test`
-- [ ] `npm run inspect` — verify the new tools
-- [ ] README / AGENTS / PLAN / ROADMAP updates
+- [ ] `npm run inspect` — verify `audio_capture` renders its audio block
+- [ ] README / AGENTS / PLAN / ROADMAP updates (§13)
 - [ ] Version bump + changelog

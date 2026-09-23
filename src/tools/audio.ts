@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import * as fs from "fs"
+import { createRequire } from "module"
 import { resolveSerial } from "../utils/adb.js"
 import {
   getSession,
@@ -22,16 +23,19 @@ import {
   listAudioSinks,
   createPlaybackSink,
   createRecordingSink,
+  createClipSink,
   defaultRecordingPath,
   onAudioHubStopped,
   pcmDurationSeconds,
   type RecordingSink,
   type PlaybackSink,
+  type ClipSink,
 } from "../utils/audio.js"
 import { probeBinary } from "../utils/ffmpeg.js"
 
 const playbackSinks = new Map<string, PlaybackSink>()
 const recordingSinks = new Map<string, RecordingSink>()
+const clipSinks = new Map<string, ClipSink>()
 
 // stopAudioHub (via stop_session or an audio-session restart) ends every
 // attached sink; drop the tool-level entries with it so a later start tool
@@ -39,7 +43,24 @@ const recordingSinks = new Map<string, RecordingSink>()
 onAudioHubStopped((serial) => {
   playbackSinks.delete(serial)
   recordingSinks.delete(serial)
+  clipSinks.delete(serial)
 })
+
+/**
+ * Detect whether the installed MCP SDK advertises an `audio` content block.
+ * The block has been in the MCP spec since the 2025-03-26 revision, but a
+ * host pinned to an older SDK should be told why it is not getting the block.
+ */
+function mcpSdkSupportsAudioBlock(): { supported: boolean; version: string } {
+  try {
+    const require = createRequire(import.meta.url)
+    const version = require("@modelcontextprotocol/sdk/package.json").version as string
+    const major = Number.parseInt(version.split(".")[0] ?? "0", 10)
+    return { supported: major >= 1 && !Number.isNaN(major), version }
+  } catch {
+    return { supported: false, version: "unknown" }
+  }
+}
 
 async function ensureAudioSession(
   serial: string,
@@ -531,6 +552,225 @@ export function registerAudioTools(server: McpServer): void {
           }],
           isError: true as const,
         }
+      }
+    }
+  )
+
+  server.registerTool(
+    "audio_capture",
+    {
+      description: "Capture a bounded clip of device audio and return it as an audio content block. Uses REMOTE_SUBMIX by default, which MUTES the device's own speakers while capturing. Use audioSource='playback' with audioDup=true (Android 13+) to keep the device audible. Requires Android 11+. Restarts the scrcpy session if it was started without audio. Returns the audio to the caller as an audio content block — use audio_record_start to write a long capture to a file on the host instead.",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+        durationSeconds: z.number().int().positive().max(30).optional().describe("Capture duration in seconds (default 5; halved to 2.5 when libopus is unavailable and WAV fallback is used)"),
+        audioSource: audioSourceSchema.describe("Audio source"),
+        audioDup: z.boolean().optional().default(false).describe("Keep device playback audible when using playback source (Android 13+)"),
+      },
+      outputSchema: {
+        status: z.string().describe("Capture status"),
+        durationSeconds: z.number().describe("Actual captured duration in seconds"),
+        sizeBytes: z.number().describe("Encoded clip size in bytes"),
+        mimeType: z.string().describe("MIME type of the returned audio (audio/ogg or audio/wav)"),
+        audioSource: z.string().describe("Audio source"),
+        deviceMuted: z.boolean().describe("Whether the device's own speakers are muted"),
+        sessionRestarted: z.boolean().describe("Whether the scrcpy session was restarted to enable audio"),
+        message: z.string().describe("Human-readable status message"),
+      },
+      annotations: {
+        title: "Capture Audio Clip",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ serial, durationSeconds, audioSource, audioDup }) => {
+      let cleanupHubStop: (() => void) | null = null
+      try {
+        if (!probeBinary("ffmpeg")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "ffmpeg was not found on the host. Install ffmpeg or set FFMPEG_PATH.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        const s = await resolveSerial(serial)
+        const { session, sessionRestarted } = await ensureAudioSession(s, {
+          audioSource,
+          audioDup,
+        })
+
+        if (!session.audioAvailable) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "Audio capture is unavailable on this device (Android < 11 or capture failure).",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        if (listAudioSinks(s).includes("clip")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio capture is already in progress for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        const sink = createClipSink(s)
+        try {
+          await sink.ready
+        } catch (err) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `ffmpeg failed to start: ${(err as Error).message}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        if (!attachAudioSink(s, sink)) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "The audio stream is not available for this device; the scrcpy audio hub is not running.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        clipSinks.set(s, sink)
+
+        const requestedDuration = durationSeconds ?? 5
+        const effectiveDuration = sink.mimeType === "audio/wav" && durationSeconds === undefined
+          ? requestedDuration / 2
+          : requestedDuration
+
+        let hubStoppedEarly = false
+        let resolveEarly: (() => void) | null = null
+        const earlyStop = new Promise<void>((resolve) => {
+          resolveEarly = resolve
+        })
+        cleanupHubStop = onAudioHubStopped((stoppedSerial) => {
+          if (stoppedSerial === s) {
+            hubStoppedEarly = true
+            resolveEarly?.()
+          }
+        })
+
+        await Promise.race([
+          new Promise((resolve) => setTimeout(resolve, effectiveDuration * 1000)),
+          earlyStop,
+        ])
+
+        if (!hubStoppedEarly) {
+          detachAudioSink(s, "clip")
+        }
+        clipSinks.delete(s)
+
+        await sink.closed
+
+        let fileBuffer: Buffer
+        try {
+          fileBuffer = await sink.collect()
+        } catch (err) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `Failed to read captured audio clip: ${(err as Error).message}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        if (sink.failure) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `Audio capture failed: ${sink.failure}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        const base64 = fileBuffer.toString("base64")
+        const structured = {
+          status: "captured",
+          durationSeconds: pcmDurationSeconds(sink.pcmBytes),
+          sizeBytes: fileBuffer.length,
+          mimeType: sink.mimeType,
+          audioSource,
+          deviceMuted: deviceMuted(audioSource, audioDup),
+          sessionRestarted,
+          message: `Captured ${effectiveDuration}s audio clip (${fileBuffer.length} bytes, ${sink.mimeType}).`,
+        }
+
+        const { supported: audioSupported, version: sdkVersion } = mcpSdkSupportsAudioBlock()
+        if (!audioSupported) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                ...structured,
+                sdkVersion,
+                warning: "Installed MCP SDK does not support audio content blocks; returning metadata only.",
+              }, null, 2),
+            }],
+            structuredContent: structured,
+            isError: true as const,
+          }
+        }
+
+        return {
+          content: [
+            { type: "audio" as const, data: base64, mimeType: sink.mimeType },
+            { type: "text" as const, text: JSON.stringify(structured, null, 2) },
+          ],
+          structuredContent: structured,
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              status: "error",
+              message: `Failed to capture audio: ${err.message}`,
+            }, null, 2),
+          }],
+          isError: true as const,
+        }
+      } finally {
+        cleanupHubStop?.()
       }
     }
   )

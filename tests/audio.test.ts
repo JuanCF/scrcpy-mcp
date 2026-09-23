@@ -29,7 +29,10 @@ import {
   onAudioHubStopped,
   pcmDurationSeconds,
   createRecordingSink,
+  createClipSink,
+  ffmpegHasLibopus,
   classifyFfmpegExit,
+  type ClipSink,
 } from "../src/utils/audio.js"
 import { probeBinary } from "../src/utils/ffmpeg.js"
 
@@ -413,5 +416,83 @@ describe("createRecordingSink failure reporting", () => {
 
     expect(sink.failure).toBeNull()
     fs.rmSync(outputPath, { force: true })
+  })
+})
+
+describe("createClipSink", () => {
+  const hasFfmpeg = probeBinary("ffmpeg") !== null
+
+  it("places the temp file under os.tmpdir()", () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    expect(path.dirname(sink.outputPath)).toBe(os.tmpdir())
+    expect(sink.mimeType).toBe("audio/wav")
+    // No data was written; just end so the process exits and we can clean up.
+    sink.end()
+  })
+
+  it("defaults to opus/ogg when libopus is available", () => {
+    if (!hasFfmpeg) return
+    if (!ffmpegHasLibopus()) return
+
+    const sink = createClipSink("test-serial")
+    expect(sink.mimeType).toBe("audio/ogg")
+    expect(sink.format).toBe("ogg")
+    sink.end()
+  })
+
+  it("falls back to wav and reports the matching mimeType", () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    expect(sink.mimeType).toBe("audio/wav")
+    expect(sink.format).toBe("wav")
+    sink.end()
+  })
+
+  it("collect() reads and deletes the temp file on success", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.1)))
+    sink.end()
+
+    const buf = await sink.collect()
+    expect(buf.length).toBeGreaterThan(0)
+    expect(fs.existsSync(sink.outputPath)).toBe(false)
+  })
+
+  it("collect() deletes the temp file when reading fails", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.05)))
+    sink.end()
+    await sink.closed
+
+    // Simulate a failure after finalisation by removing the file before collect.
+    fs.rmSync(sink.outputPath, { force: true })
+
+    await expect(sink.collect()).rejects.toThrow()
+    expect(fs.existsSync(sink.outputPath)).toBe(false)
+  })
+
+  it("keeps the partial file readable after device loss (end) and deletes on collect", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.1)))
+    // Hub stop calls end() on every sink; simulate that here.
+    sink.end()
+    await sink.closed
+
+    expect(fs.existsSync(sink.outputPath)).toBe(true)
+    const buf = await sink.collect()
+    expect(buf.length).toBeGreaterThan(0)
+    expect(fs.existsSync(sink.outputPath)).toBe(false)
   })
 })

@@ -370,7 +370,7 @@ These tools manage the scrcpy connection to the device. When a session is active
 | `start_video_stream` | `serial?`, `port?` | Text (JSON) | **scrcpy** / MJPEG | Start an HTTP MJPEG stream of the device screen and open an ffplay viewer window. Auto-starts a scrcpy session if needed. |
 | `stop_video_stream` | `serial?` | Text | MJPEG | Stop the MJPEG stream and close the ffplay viewer window |
 
-### 5.3c Audio Streaming & Recording (4 tools)
+### 5.3c Audio Streaming & Recording (5 tools)
 
 Requires Android 11+. The default source `output` uses `REMOTE_SUBMIX`, which mutes the device's own speakers while capturing. Use `audioSource: "playback"` with `audioDup: true` (Android 13+) to keep the device audible. Recordings are written to the host filesystem.
 
@@ -380,6 +380,7 @@ Requires Android 11+. The default source `output` uses `REMOTE_SUBMIX`, which mu
 | `stop_audio_stream` | `serial?` | Text | **scrcpy** | Stop streaming audio to the host. |
 | `audio_record_start` | `serial?`, `localPath?`, `format?`, `audioSource?`, `audioDup?` | Text (JSON) | **scrcpy** | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. |
 | `audio_record_stop` | `serial?` | Text (JSON) | **scrcpy** | Stop the recording and finalise the host-side file. |
+| `audio_capture` | `serial?`, `durationSeconds?`, `audioSource?`, `audioDup?` | **Audio** (base64 OGG/WAV) + Text (JSON) | **scrcpy** | Capture a bounded clip of device audio and return it as an audio content block. Restarts the scrcpy session if needed. |
 
 ### 5.4 Input Control (7 tools)
 
@@ -442,18 +443,18 @@ All input tools use **scrcpy's control protocol natively** when a session is act
 | Device Management | 4 (screen on/off, rotate, panels) | 2 (list, info) | 8* |
 | Vision | 1 (screenshot via stream) | 2 (record start/stop) | 3 |
 | Video Streaming | 2 (MJPEG stream) | 0 | 2 |
-| Audio Streaming & Recording | 4 (stream/record start/stop) | 0 | 4 |
+| Audio Streaming & Recording | 5 (stream/record start/stop, audio_capture) | 0 | 5 |
 | Input | 7 (all via control socket) | 0 (ADB fallback only) | 7 |
 | App Management | 1 (start) | 5 (stop, install, uninstall, list, current) | 6 |
 | UI Automation | 0 | 2 | 2 |
 | Shell | 0 | 1 | 1 |
 | File Transfer | 0 | 3 | 3 |
 | Clipboard | 2 (get/set) | 0 (ADB fallback only) | 2 |
-| **Total** | **21** | **13** | **40** |
+| **Total** | **22** | **13** | **41** |
 
 *\* expand_notifications, expand_settings, collapse_panels have no ADB fallback — they require a scrcpy session.*
 
-**Total: 40 tools** (21 scrcpy-native, 13 ADB-only, 6 with ADB fallback)
+**Total: 41 tools** (22 scrcpy-native, 13 ADB-only, 6 with ADB fallback)
 
 
 ---
@@ -1578,7 +1579,7 @@ This would let users restrict what the AI can do.
 
 ## Summary
 
-This plan produces a **36-tool MCP server** built on top of **scrcpy's binary control protocol** for near-instant input injection, screenshots, clipboard sync, panel control, app launching, and screen management — with automatic ADB fallback when scrcpy is not available. 17 of the 36 tools use scrcpy's native protocol, 13 use ADB for things scrcpy doesn't handle, and 6 have both paths. The implementation is split into 5 phases, with ADB-based functionality working after Phase 1, and the full scrcpy-first fast path after Phase 2. The package will be published to npm for easy `npx scrcpy-mcp` usage by the wider developer community.
+This plan produces a **41-tool MCP server** built on top of **scrcpy's binary control protocol** for near-instant input injection, screenshots, clipboard sync, panel control, app launching, screen management, and audio capture — with automatic ADB fallback when scrcpy is not available. 22 of the 41 tools use scrcpy's native protocol, 13 use ADB for things scrcpy doesn't handle, and 6 have both paths. The implementation is split into phases, with ADB-based functionality working after Phase 1, and the full scrcpy-first fast path after Phase 2. The package will be published to npm for easy `npx scrcpy-mcp` usage by the wider developer community.
 
 **Estimated implementation time:** 6-8 hours for all phases (scrcpy binary protocol adds complexity).
 **Estimated package size:** <50KB (bundled).

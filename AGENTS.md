@@ -213,7 +213,8 @@ server.registerTool(
 {
   content: [
     { type: "text", text: "..." } |
-    { type: "image", data: base64, mimeType: "image/png" }
+    { type: "image", data: base64, mimeType: "image/png" } |
+    { type: "audio", data: base64, mimeType: "audio/ogg" }
   ],
   structuredContent?: { ... }  // mirror of the JSON text for programmatic consumers
   isError?: true               // set for error responses

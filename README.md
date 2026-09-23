@@ -8,7 +8,7 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 
 ## Features
 
-- **40 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, video streaming, and audio streaming/recording
+- **41 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, video streaming, and audio streaming/recording
 - **scrcpy-first**: uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots (~33ms)
 - **ADB fallback**: interaction tools work without scrcpy — slower but always available (the audio tools `start_audio_stream`/`audio_record_start` and the video stream require scrcpy)
 - **Image-returning screenshots**: the AI actually sees the screen, not just a file path
@@ -197,6 +197,7 @@ turn audio on.
 | `stop_audio_stream` | Stop streaming audio to the host. |
 | `audio_record_start` | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. |
 | `audio_record_stop` | Stop the recording and finalise the host-side file. |
+| `audio_capture` | Capture a bounded clip of device audio and return it as an audio content block. Restarts the scrcpy session if needed. |
 
 ### Device Management
 
