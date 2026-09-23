@@ -29,8 +29,21 @@ import {
   onAudioHubStopped,
   pcmDurationSeconds,
   createRecordingSink,
+  createClipSink,
+  ffmpegHasLibopus,
   classifyFfmpegExit,
 } from "../src/utils/audio.js"
+import {
+  finaliseRecording,
+  getAvailableBytes,
+  recordingSinks,
+  PCM_BYTES_PER_SECOND,
+  OPUS_BYTES_PER_SECOND,
+  recordingBudgetBytes,
+  claimAudioSink,
+  releaseAudioSink,
+  type ActiveRecording,
+} from "../src/tools/audio.js"
 import { probeBinary } from "../src/utils/ffmpeg.js"
 
 describe("parseAudioHeader", () => {
@@ -413,5 +426,308 @@ describe("createRecordingSink failure reporting", () => {
 
     expect(sink.failure).toBeNull()
     fs.rmSync(outputPath, { force: true })
+  })
+})
+
+describe("createClipSink", () => {
+  const hasFfmpeg = probeBinary("ffmpeg") !== null
+
+  it("places the temp file under os.tmpdir()", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    expect(path.dirname(sink.outputPath)).toBe(os.tmpdir())
+    expect(sink.mimeType).toBe("audio/wav")
+    // No data was written; just end so the process exits and we can clean up.
+    sink.end()
+    await sink.closed
+    await sink.collect().catch(() => {})
+  })
+
+  it("defaults to opus/ogg when libopus is available", async () => {
+    if (!hasFfmpeg) return
+    if (!ffmpegHasLibopus()) return
+
+    const sink = createClipSink("test-serial")
+    expect(sink.mimeType).toBe("audio/ogg")
+    expect(sink.format).toBe("ogg")
+    sink.end()
+    await sink.closed
+    await sink.collect().catch(() => {})
+  })
+
+  it("falls back to wav and reports the matching mimeType", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    expect(sink.mimeType).toBe("audio/wav")
+    expect(sink.format).toBe("wav")
+    sink.end()
+    await sink.closed
+    await sink.collect().catch(() => {})
+  })
+
+  it("collect() reads and deletes the temp file on success", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.1)))
+    sink.end()
+
+    const buf = await sink.collect()
+    expect(buf.length).toBeGreaterThan(0)
+    expect(fs.existsSync(sink.outputPath)).toBe(false)
+  })
+
+  it("collect() deletes the temp file when reading fails", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.05)))
+    sink.end()
+    await sink.closed
+
+    // Simulate a failure after finalisation by removing the file before collect.
+    fs.rmSync(sink.outputPath, { force: true })
+
+    await expect(sink.collect()).rejects.toThrow()
+    expect(fs.existsSync(sink.outputPath)).toBe(false)
+  })
+
+  it("keeps the partial file readable after device loss (end) and deletes on collect", async () => {
+    if (!hasFfmpeg) return
+
+    const sink = createClipSink("test-serial", "wav")
+    await sink.ready
+    sink.write(Buffer.alloc(Math.round(AUDIO_SAMPLE_RATE * 2 * 2 * 0.1)))
+    // Hub stop calls end() on every sink; simulate that here.
+    sink.end()
+    await sink.closed
+
+    expect(fs.existsSync(sink.outputPath)).toBe(true)
+    const buf = await sink.collect()
+    expect(buf.length).toBeGreaterThan(0)
+    expect(fs.existsSync(sink.outputPath)).toBe(false)
+  })
+})
+
+describe("finaliseRecording", () => {
+  let socket: net.Socket
+
+  beforeEach(() => {
+    recordingSinks.clear()
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
+  })
+
+  afterEach(() => {
+    stopAudioHub("race-device")
+    stopAudioHub("hub-stop-device")
+    recordingSinks.clear()
+  })
+
+  function fakeRecordingSink(): RecordingSink {
+    return {
+      id: "recording",
+      outputPath: "/tmp/fake.wav",
+      format: "wav",
+      closed: Promise.resolve(),
+      get killed() { return false },
+      get pcmBytes() { return 0 },
+      get failure() { return null },
+      ready: Promise.resolve(),
+      write: () => {},
+      end: vi.fn(),
+    } as unknown as RecordingSink
+  }
+
+  it("finalises exactly once when user stop races the maxDuration timer", () => {
+    vi.useFakeTimers()
+    try {
+      const sink = fakeRecordingSink()
+      startAudioHub("race-device", socket)
+      attachAudioSink("race-device", sink)
+      const rec: ActiveRecording = {
+        sink,
+        timer: setTimeout(() => finaliseRecording("race-device", "maxDuration"), 100),
+        stoppedReason: "user",
+        finalised: false,
+      }
+      recordingSinks.set("race-device", rec)
+
+      finaliseRecording("race-device", "user")
+      vi.advanceTimersByTime(200)
+
+      expect(sink.end).toHaveBeenCalledTimes(1)
+      expect(rec.stoppedReason).toBe("user")
+      expect(rec.finalised).toBe(true)
+      expect(rec.timer).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("sets deviceLost when the hub stops", () => {
+    const sink = fakeRecordingSink()
+    startAudioHub("hub-stop-device", socket)
+    attachAudioSink("hub-stop-device", sink)
+    const rec: ActiveRecording = {
+      sink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: false,
+    }
+    recordingSinks.set("hub-stop-device", rec)
+
+    finaliseRecording("hub-stop-device", "deviceLost")
+
+    expect(rec.stoppedReason).toBe("deviceLost")
+    expect(rec.finalised).toBe(true)
+    expect(sink.end).toHaveBeenCalledOnce()
+  })
+
+  it("ignores a stale timer from an earlier recording on the same device", () => {
+    const oldSink = fakeRecordingSink()
+    const oldRec: ActiveRecording = {
+      sink: oldSink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: true,
+    }
+    const newSink = fakeRecordingSink()
+    startAudioHub("race-device", socket)
+    attachAudioSink("race-device", newSink)
+    const newRec: ActiveRecording = {
+      sink: newSink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: false,
+    }
+    recordingSinks.set("race-device", newRec)
+
+    expect(finaliseRecording("race-device", "maxDuration", oldRec)).toBe(false)
+    expect(newRec.finalised).toBe(false)
+    expect(newSink.end).not.toHaveBeenCalled()
+  })
+})
+
+describe("claimAudioSink", () => {
+  let socket: net.Socket
+
+  beforeEach(() => {
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
+  })
+
+  afterEach(() => {
+    releaseAudioSink("claim-device", "clip")
+    releaseAudioSink("claim-device", "recording")
+    stopAudioHub("claim-device")
+  })
+
+  it("refuses a second claim of the same kind until released", () => {
+    expect(claimAudioSink("claim-device", "clip")).toBe(true)
+    expect(claimAudioSink("claim-device", "clip")).toBe(false)
+    expect(claimAudioSink("claim-device", "recording")).toBe(true)
+    releaseAudioSink("claim-device", "clip")
+    expect(claimAudioSink("claim-device", "clip")).toBe(true)
+  })
+
+  it("refuses a claim while a sink of that kind is attached", () => {
+    startAudioHub("claim-device", socket)
+    attachAudioSink("claim-device", { id: "clip", write: () => {}, end: () => {} })
+    expect(claimAudioSink("claim-device", "clip")).toBe(false)
+  })
+})
+
+describe("getAvailableBytes", () => {
+  it("returns bavail × bsize from statfs", async () => {
+    vi.spyOn(fs.promises, "statfs").mockResolvedValue({
+      bavail: 100,
+      bsize: 4096,
+    } as fs.StatsFs)
+
+    const bytes = await getAvailableBytes("/some/dir")
+    expect(bytes).toBe(409600)
+  })
+
+  it("returns a large number when statfs fails", async () => {
+    vi.spyOn(fs.promises, "statfs").mockRejectedValue(new Error("ENOENT"))
+
+    const bytes = await getAvailableBytes("/nonexistent")
+    expect(bytes).toBe(Number.MAX_SAFE_INTEGER)
+  })
+})
+
+describe("recording size budget", () => {
+  it("budgets maxDuration × 192000 bytes", () => {
+    expect(PCM_BYTES_PER_SECOND).toBe(192000)
+    expect(300 * PCM_BYTES_PER_SECOND).toBe(57600000)
+  })
+
+  it("budgets opus at its 96 kbps bitrate rather than raw PCM", () => {
+    expect(OPUS_BYTES_PER_SECOND).toBe(12000)
+    expect(recordingBudgetBytes(3600, "opus")).toBe(43200000)
+    expect(recordingBudgetBytes(3600, "wav")).toBe(691200000)
+  })
+})
+
+describe("onAudioHubStopped cleans up every sink type", () => {
+  let socket: net.Socket
+
+  beforeEach(() => {
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
+  })
+
+  afterEach(() => {
+    stopAudioHub("sink-cleanup-device")
+    recordingSinks.clear()
+  })
+
+  it("finalises a recording sink with deviceLost", () => {
+    const ended: string[] = []
+    const sink = {
+      id: "recording",
+      write: () => {},
+      end: () => { ended.push("recording") },
+    }
+    const rec: ActiveRecording = {
+      sink: sink as unknown as RecordingSink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: false,
+    }
+    recordingSinks.set("sink-cleanup-device", rec)
+
+    startAudioHub("sink-cleanup-device", socket)
+    attachAudioSink("sink-cleanup-device", sink)
+    stopAudioHub("sink-cleanup-device")
+
+    expect(ended).toContain("recording")
+    expect(rec.stoppedReason).toBe("deviceLost")
+    expect(rec.finalised).toBe(true)
+  })
+
+  it("ends playback and clip sinks via the hub", () => {
+    const ended: string[] = []
+    const playback = { id: "playback", write: () => {}, end: () => { ended.push("playback") } }
+    const clip = { id: "clip", write: () => {}, end: () => { ended.push("clip") } }
+
+    startAudioHub("sink-cleanup-device", socket)
+    attachAudioSink("sink-cleanup-device", playback)
+    attachAudioSink("sink-cleanup-device", clip)
+    stopAudioHub("sink-cleanup-device")
+
+    expect(ended).toContain("playback")
+    expect(ended).toContain("clip")
   })
 })

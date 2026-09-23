@@ -57,14 +57,14 @@ src/
 ├── index.ts           # Entry point, server setup, tool registration
 ├── utils/
 │   ├── adb.ts         # ADB utility functions (exec, device detection, etc.)
-│   ├── audio.ts       # Audio hub, playback sink, recording sink
+│   ├── audio.ts       # Audio hub, playback sink, recording/clip encoder sinks
 │   ├── ffmpeg.ts      # ffmpeg/ffplay binary resolution
 │   ├── scrcpy.ts      # scrcpy session lifecycle, control protocol, video decode
 │   ├── mjpeg.ts       # HTTP MJPEG server and ffplay viewer launcher
 │   └── constants.ts   # Shared constants (protocol types, env vars, keycodes)
 └── tools/
     ├── apps.ts        # App management (start, stop, install, uninstall, list, current)
-    ├── audio.ts       # Audio streaming and recording tools
+    ├── audio.ts       # Audio streaming, recording, and clip capture tools
     ├── clipboard.ts   # Clipboard get/set (scrcpy + ADB fallback)
     ├── device.ts      # Device management (list, info, screen, panels, rotation, WiFi)
     ├── files.ts       # File push/pull/list
@@ -213,7 +213,8 @@ server.registerTool(
 {
   content: [
     { type: "text", text: "..." } |
-    { type: "image", data: base64, mimeType: "image/png" }
+    { type: "image", data: base64, mimeType: "image/png" } |
+    { type: "audio", data: base64, mimeType: "audio/ogg" }
   ],
   structuredContent?: { ... }  // mirror of the JSON text for programmatic consumers
   isError?: true               // set for error responses

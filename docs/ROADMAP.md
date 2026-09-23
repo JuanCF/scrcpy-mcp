@@ -292,8 +292,11 @@ Capture device audio on the host: stream to speakers or record to file. Full des
 - [x] 6.2.3 Implement `start_audio_stream` / `stop_audio_stream` — playback via `ffplay -nodisp`
 - [ ] 6.2.4 Frame-meta support and compressed audio codecs (opus/aac/flac)
 - [ ] 6.2.5 Synced audio+video viewer
+- [x] 6.2.6 Implement `audio_capture` — a bounded clip returned to the agent as an MCP audio content block
+- [x] 6.2.7 Capture limits (`maxDuration`, size budget, free-space check) and mid-capture device-loss handling
 
 **Use cases:**
+- Let an agent *hear* the device — 6.2.6 returns the audio inline, the way `screenshot` returns an image
 - Transcribe device audio from a captured `.wav`
 - Verify sounds and voice prompts during automation
 - Real-time audio feedback while watching a stream
@@ -307,6 +310,9 @@ Capture device audio on the host: stream to speakers or record to file. Full des
 - Recordings are written to the host filesystem, not the device
 - MJPEG cannot carry audio — the existing viewer window stays silent until 6.2.5
 - 6.2.4 and 6.2.5 are deferred, not scheduled — see the Decisions Log in [AUDIO_PLAN.md](AUDIO_PLAN.md) for the triggers that would promote them
+- 6.2.6 and 6.2.7 shipped as Phases F and G of [AUDIO_PLAN.md](AUDIO_PLAN.md). Both depended only on the socket plumbing in 6.2.1, not on 6.2.4 or 6.2.5
+- After 6.2.1–6.2.3 audio reached the host's speakers and the host's disk but never the agent itself — that gap is what 6.2.6 closed
+- `audio_record_start` stops after `maxDuration` seconds (default 300, max 3600); before 6.2.7 it was unbounded, writing ~11 MB/min until stopped
 
 ---
 

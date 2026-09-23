@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import * as fs from "fs"
+import * as path from "path"
 import { resolveSerial } from "../utils/adb.js"
 import {
   getSession,
@@ -22,27 +23,92 @@ import {
   listAudioSinks,
   createPlaybackSink,
   createRecordingSink,
+  createClipSink,
   defaultRecordingPath,
   onAudioHubStopped,
   pcmDurationSeconds,
   type RecordingSink,
   type PlaybackSink,
+  type ClipSink,
 } from "../utils/audio.js"
 import { probeBinary } from "../utils/ffmpeg.js"
 
 const playbackSinks = new Map<string, PlaybackSink>()
-const recordingSinks = new Map<string, RecordingSink>()
+const clipSinks = new Map<string, ClipSink>()
+
+export interface ActiveRecording {
+  sink: RecordingSink
+  timer: NodeJS.Timeout | null
+  stoppedReason: "user" | "maxDuration" | "deviceLost"
+  finalised: boolean
+}
+
+export const recordingSinks = new Map<string, ActiveRecording>()
+
+/**
+ * Finalise an active recording exactly once, whichever event arrives first:
+ * user stop, maxDuration timer, or device loss. The entry stays in
+ * recordingSinks so a late audio_record_stop can still report the outcome.
+ */
+export function finaliseRecording(
+  serial: string,
+  reason: "user" | "maxDuration" | "deviceLost",
+  expected?: ActiveRecording
+): boolean {
+  const rec = recordingSinks.get(serial)
+  if (!rec || rec.finalised || (expected && rec !== expected)) return false
+  rec.finalised = true
+  rec.stoppedReason = reason
+  if (rec.timer) {
+    clearTimeout(rec.timer)
+    rec.timer = null
+  }
+  detachAudioSink(serial, "recording")
+  return true
+}
 
 // stopAudioHub (via stop_session or an audio-session restart) ends every
 // attached sink; drop the tool-level entries with it so a later start tool
-// doesn't report "already active" over a dead sink.
+// doesn't report "already active" over a dead sink. For recordings, finalise
+// the partial file with a deviceLost reason rather than discarding it.
 onAudioHubStopped((serial) => {
   playbackSinks.delete(serial)
-  recordingSinks.delete(serial)
+  clipSinks.delete(serial)
+  finaliseRecording(serial, "deviceLost")
 })
+
+type AudioSinkKind = "recording" | "playback" | "clip"
+
+// Each start tool awaits (session restart, free-space check, encoder spawn)
+// before its sink is attached, so "is one already running?" can't be answered
+// from the hub alone. A claim is taken synchronously up front and held until
+// the sink is attached, so a concurrent call for the same device backs off.
+const audioClaims = new Map<string, Set<AudioSinkKind>>()
+
+export function claimAudioSink(serial: string, kind: AudioSinkKind): boolean {
+  const claims = audioClaims.get(serial) ?? new Set<AudioSinkKind>()
+  if (claims.has(kind) || listAudioSinks(serial).includes(kind)) return false
+  claims.add(kind)
+  audioClaims.set(serial, claims)
+  return true
+}
+
+export function releaseAudioSink(serial: string, kind: AudioSinkKind): void {
+  const claims = audioClaims.get(serial)
+  if (!claims) return
+  claims.delete(kind)
+  if (claims.size === 0) audioClaims.delete(serial)
+}
+
+function otherAudioUsers(serial: string, kind: AudioSinkKind): string[] {
+  const users = new Set<string>([...listAudioSinks(serial), ...(audioClaims.get(serial) ?? [])])
+  users.delete(kind)
+  return Array.from(users)
+}
 
 async function ensureAudioSession(
   serial: string,
+  kind: AudioSinkKind,
   options: { audioSource?: AudioSourceName; audioDup?: boolean } = {}
 ): Promise<{ session: ScrcpySession; sessionRestarted: boolean }> {
   const s = await resolveSerial(serial)
@@ -59,6 +125,15 @@ async function ensureAudioSession(
     if (sourceMatch && dupMatch) {
       return { session, sessionRestarted: false }
     }
+  }
+
+  // Restarting stops the audio hub, which would silently cut off every other
+  // recording, stream, or clip on this device.
+  const others = otherAudioUsers(s, kind)
+  if (others.length > 0) {
+    throw new Error(
+      `audio is already in use on ${s} (${others.join(", ")}) with audioSource=${session?.options.audioSource ?? "output"}, audioDup=${session?.options.audioDup ?? false}; stop it first or request the same audioSource/audioDup`
+    )
   }
 
   const wasMjpegRunning = isMjpegServerRunning(s)
@@ -95,7 +170,26 @@ function deviceMuted(audioSource: AudioSourceName, audioDup: boolean): boolean {
   return audioSource === "output" || (audioSource === "playback" && !audioDup)
 }
 
-const audioSourceSchema = z.enum([
+/** Bytes per second of raw PCM: 48000 Hz × 2 channels × 2 bytes/sample. */
+export const PCM_BYTES_PER_SECOND = 192000
+
+/** Bytes per second of an opus recording, matching `-b:a 96k` in createRecordingSink. */
+export const OPUS_BYTES_PER_SECOND = 12000
+
+export function recordingBudgetBytes(maxDuration: number, format: "wav" | "opus"): number {
+  return maxDuration * (format === "opus" ? OPUS_BYTES_PER_SECOND : PCM_BYTES_PER_SECOND)
+}
+
+export async function getAvailableBytes(dir: string): Promise<number> {
+  try {
+    const stat = await fs.promises.statfs(dir)
+    return stat.bavail * stat.bsize
+  } catch {
+    return Number.MAX_SAFE_INTEGER
+  }
+}
+
+const audioSourceEnum = z.enum([
   "output",
   "playback",
   "mic",
@@ -107,17 +201,20 @@ const audioSourceSchema = z.enum([
   "voice-call-uplink",
   "voice-call-downlink",
   "voice-performance",
-]).optional().default("output")
+])
+
+const audioSourceSchema = audioSourceEnum.optional().default("output")
 
 export function registerAudioTools(server: McpServer): void {
   server.registerTool(
     "audio_record_start",
     {
-      description: "Start capturing device audio to a file on the host. Uses REMOTE_SUBMIX by default, which MUTES the device's own speakers while capturing. Use audioSource='playback' with audioDup=true (Android 13+) to keep the device audible. Requires Android 11+. Restarts the scrcpy session if it was started without audio. Unlike screen_record_* this writes to the host filesystem directly.",
+      description: "Start capturing device audio to a file on the host. Uses REMOTE_SUBMIX by default, which MUTES the device's own speakers while capturing. Use audioSource='playback' with audioDup=true (Android 13+) to keep the device audible. Requires Android 11+. Restarts the scrcpy session if it was started without audio. Recordings are automatically stopped after maxDuration seconds (default 300). Unlike screen_record_* this writes to the host filesystem directly.",
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
         localPath: z.string().optional().describe("Host path for the recording (default ./scrcpy-mcp-audio-<timestamp>.wav)"),
         format: z.enum(["wav", "opus"]).optional().default("wav").describe("Recording format: wav (default) or opus"),
+        maxDuration: z.number().int().positive().max(3600).optional().default(300).describe("Maximum recording duration in seconds (default 300)"),
         audioSource: audioSourceSchema.describe("Audio source"),
         audioDup: z.boolean().optional().default(false).describe("Keep device playback audible when using playback source (Android 13+)"),
       },
@@ -125,6 +222,7 @@ export function registerAudioTools(server: McpServer): void {
         status: z.string().describe("Recording status"),
         localPath: z.string().describe("Host path the recording is being written to"),
         format: z.string().describe("Recording format"),
+        maxDuration: z.number().describe("Maximum recording duration in seconds"),
         deviceMuted: z.boolean().describe("Whether the device's own speakers are muted"),
         sessionRestarted: z.boolean().describe("Whether the scrcpy session was restarted to enable audio"),
         message: z.string().describe("Human-readable status message"),
@@ -137,7 +235,8 @@ export function registerAudioTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ serial, localPath, format, audioSource, audioDup }) => {
+    async ({ serial, localPath, format, maxDuration, audioSource, audioDup }) => {
+      let claimed: string | null = null
       try {
         if (!probeBinary("ffmpeg")) {
           return {
@@ -152,7 +251,21 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
         const s = await resolveSerial(serial)
-        const { session, sessionRestarted } = await ensureAudioSession(s, {
+        if (!claimAudioSink(s, "recording")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio recording is already in progress for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        claimed = s
+
+        const { session, sessionRestarted } = await ensureAudioSession(s, "recording", {
           audioSource,
           audioDup,
         })
@@ -170,20 +283,23 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
-        if (recordingSinks.has(s) || listAudioSinks(s).includes("recording")) {
+        const outputPath = localPath ?? defaultRecordingPath(format)
+        const requiredBytes = recordingBudgetBytes(maxDuration, format)
+        const outputDir = path.resolve(path.dirname(outputPath))
+        const availableBytes = await getAvailableBytes(outputDir)
+        if (availableBytes < requiredBytes) {
           return {
             content: [{
               type: "text" as const,
               text: JSON.stringify({
                 status: "error",
-                message: "An audio recording is already in progress for this device.",
+                message: `Not enough free space for a ${maxDuration}s recording: need ${requiredBytes} bytes, only ${availableBytes} bytes available on the target volume.`,
               }, null, 2),
             }],
             isError: true as const,
           }
         }
 
-        const outputPath = localPath ?? defaultRecordingPath(format)
         const sink = createRecordingSink(s, outputPath, format)
         try {
           await sink.ready
@@ -213,15 +329,26 @@ export function registerAudioTools(server: McpServer): void {
             isError: true as const,
           }
         }
-        recordingSinks.set(s, sink)
+
+        const rec: ActiveRecording = {
+          sink,
+          timer: null,
+          stoppedReason: "user",
+          finalised: false,
+        }
+        rec.timer = setTimeout(() => {
+          finaliseRecording(s, "maxDuration", rec)
+        }, maxDuration * 1000)
+        recordingSinks.set(s, rec)
 
         const structured = {
           status: "recording",
           localPath: outputPath,
           format,
+          maxDuration,
           deviceMuted: deviceMuted(audioSource, audioDup),
           sessionRestarted,
-          message: `Recording audio to ${outputPath} (${format}). Device speakers are ${deviceMuted(audioSource, audioDup) ? "muted" : "audible"}.`,
+          message: `Recording audio to ${outputPath} (${format}, max ${maxDuration}s). Device speakers are ${deviceMuted(audioSource, audioDup) ? "muted" : "audible"}.`,
         }
         return {
           content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }],
@@ -239,6 +366,8 @@ export function registerAudioTools(server: McpServer): void {
           }],
           isError: true as const,
         }
+      } finally {
+        if (claimed) releaseAudioSink(claimed, "recording")
       }
     }
   )
@@ -255,6 +384,7 @@ export function registerAudioTools(server: McpServer): void {
         localPath: z.string().describe("Host path of the recording"),
         sizeBytes: z.number().describe("Final file size in bytes"),
         durationSeconds: z.number().describe("Estimated duration in seconds"),
+        stoppedReason: z.enum(["user", "maxDuration", "deviceLost"]).describe("Why the recording stopped"),
         message: z.string().describe("Human-readable status message"),
       },
       annotations: {
@@ -268,8 +398,8 @@ export function registerAudioTools(server: McpServer): void {
     async ({ serial }) => {
       try {
         const s = await resolveSerial(serial)
-        const sink = recordingSinks.get(s)
-        if (!sink) {
+        const rec = recordingSinks.get(s)
+        if (!rec) {
           return {
             content: [{
               type: "text" as const,
@@ -282,10 +412,11 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
+        finaliseRecording(s, "user")
         recordingSinks.delete(s)
-        detachAudioSink(s, "recording")
-        await sink.closed
+        await rec.sink.closed
 
+        const sink = rec.sink
         let sizeBytes = 0
         let statError: string | null = null
         try {
@@ -318,13 +449,21 @@ export function registerAudioTools(server: McpServer): void {
         // reliable for both wav and opus, unlike the container size (which
         // for wav includes headers and for opus is a compressed bitstream).
         const durationSeconds = pcmDurationSeconds(sink.pcmBytes)
+        const stoppedReason = rec.stoppedReason
+
+        const reasonText = {
+          user: "",
+          maxDuration: " (stopped by maxDuration)",
+          deviceLost: " (stopped because the device was lost)",
+        }[stoppedReason]
 
         const structured = {
           status: "stopped",
           localPath: sink.outputPath,
           sizeBytes,
           durationSeconds,
-          message: `Recording saved to ${sink.outputPath} (${sizeBytes} bytes${sink.killed ? ", ffmpeg was force-killed" : ""}).`,
+          stoppedReason,
+          message: `Recording saved to ${sink.outputPath} (${sizeBytes} bytes${sink.killed ? ", ffmpeg was force-killed" : ""})${reasonText}.`,
         }
         return {
           content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }],
@@ -372,6 +511,7 @@ export function registerAudioTools(server: McpServer): void {
       },
     },
     async ({ serial, audioSource, audioDup }) => {
+      let claimed: string | null = null
       try {
         if (!probeBinary("ffplay")) {
           return {
@@ -386,7 +526,21 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
         const s = await resolveSerial(serial)
-        const { session, sessionRestarted } = await ensureAudioSession(s, {
+        if (!claimAudioSink(s, "playback")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio stream is already playing for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        claimed = s
+
+        const { session, sessionRestarted } = await ensureAudioSession(s, "playback", {
           audioSource,
           audioDup,
         })
@@ -398,19 +552,6 @@ export function registerAudioTools(server: McpServer): void {
               text: JSON.stringify({
                 status: "error",
                 message: "Audio capture is unavailable on this device (Android < 11 or capture failure).",
-              }, null, 2),
-            }],
-            isError: true as const,
-          }
-        }
-
-        if (playbackSinks.has(s) || listAudioSinks(s).includes("playback")) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "error",
-                message: "An audio stream is already playing for this device.",
               }, null, 2),
             }],
             isError: true as const,
@@ -472,6 +613,8 @@ export function registerAudioTools(server: McpServer): void {
           }],
           isError: true as const,
         }
+      } finally {
+        if (claimed) releaseAudioSink(claimed, "playback")
       }
     }
   )
@@ -530,6 +673,234 @@ export function registerAudioTools(server: McpServer): void {
             }, null, 2),
           }],
           isError: true as const,
+        }
+      }
+    }
+  )
+
+  server.registerTool(
+    "audio_capture",
+    {
+      description: "Capture a bounded clip of device audio and return it as an audio content block. Uses REMOTE_SUBMIX by default, which MUTES the device's own speakers while capturing. Use audioSource='playback' with audioDup=true (Android 13+) to keep the device audible. Requires Android 11+. Restarts the scrcpy session if it was started without audio. Returns the audio to the caller as an audio content block — use audio_record_start to write a long capture to a file on the host instead.",
+      inputSchema: {
+        serial: z.string().optional().describe("Device serial number"),
+        durationSeconds: z.number().int().positive().max(30).optional().describe("Capture duration in seconds (default 5; halved to 2.5 when libopus is unavailable and WAV fallback is used)"),
+        audioSource: audioSourceEnum.optional().describe("Audio source (default: the running audio session's source, so an active recording or stream is not interrupted; otherwise output)"),
+        audioDup: z.boolean().optional().describe("Keep device playback audible when using playback source (Android 13+; default: the running audio session's setting, otherwise false)"),
+      },
+      outputSchema: {
+        status: z.string().describe("Capture status: captured, or truncated when the device audio stream ended before the requested duration"),
+        durationSeconds: z.number().describe("Actual captured duration in seconds"),
+        sizeBytes: z.number().describe("Encoded clip size in bytes"),
+        mimeType: z.string().describe("MIME type of the returned audio (audio/ogg or audio/wav)"),
+        audioSource: z.string().describe("Audio source"),
+        deviceMuted: z.boolean().describe("Whether the device's own speakers are muted"),
+        sessionRestarted: z.boolean().describe("Whether the scrcpy session was restarted to enable audio"),
+        message: z.string().describe("Human-readable status message"),
+      },
+      annotations: {
+        title: "Capture Audio Clip",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ serial, durationSeconds, audioSource: requestedSource, audioDup: requestedDup }) => {
+      let cleanupHubStop: (() => void) | null = null
+      let claimed: string | null = null
+      // Owns the clip sink's temp file until collect() takes over; any exit
+      // before then must end ffmpeg and delete the file it finalised.
+      let pendingSink: ClipSink | null = null
+      try {
+        if (!probeBinary("ffmpeg")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "ffmpeg was not found on the host. Install ffmpeg or set FFMPEG_PATH.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        const s = await resolveSerial(serial)
+        if (!claimAudioSink(s, "clip")) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "An audio capture is already in progress for this device.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        claimed = s
+
+        const current = getSession(s)
+        const currentOptions = current?.audioAvailable ? current.options : undefined
+        const audioSource = requestedSource ?? currentOptions?.audioSource ?? "output"
+        const audioDup = requestedDup ?? currentOptions?.audioDup ?? false
+        const { session, sessionRestarted } = await ensureAudioSession(s, "clip", {
+          audioSource,
+          audioDup,
+        })
+
+        if (!session.audioAvailable) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "Audio capture is unavailable on this device (Android < 11 or capture failure).",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        const sink = createClipSink(s)
+        pendingSink = sink
+        try {
+          await sink.ready
+        } catch (err) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `ffmpeg failed to start: ${(err as Error).message}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        if (!attachAudioSink(s, sink)) {
+          sink.end()
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: "The audio stream is not available for this device; the scrcpy audio hub is not running.",
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+        clipSinks.set(s, sink)
+
+        const requestedDuration = durationSeconds ?? 5
+        const effectiveDuration = sink.mimeType === "audio/wav" && durationSeconds === undefined
+          ? requestedDuration / 2
+          : requestedDuration
+
+        let hubStoppedEarly = false
+        let resolveEarly: (() => void) | null = null
+        const earlyStop = new Promise<void>((resolve) => {
+          resolveEarly = resolve
+        })
+        cleanupHubStop = onAudioHubStopped((stoppedSerial) => {
+          if (stoppedSerial === s) {
+            hubStoppedEarly = true
+            resolveEarly?.()
+          }
+        })
+
+        await Promise.race([
+          new Promise((resolve) => setTimeout(resolve, effectiveDuration * 1000)),
+          earlyStop,
+        ])
+
+        if (!hubStoppedEarly) {
+          detachAudioSink(s, "clip")
+        }
+        clipSinks.delete(s)
+
+        await sink.closed
+
+        let fileBuffer: Buffer
+        try {
+          // collect() deletes the temp file on every outcome, so it takes
+          // over ownership from here on.
+          pendingSink = null
+          fileBuffer = await sink.collect()
+        } catch (err) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `Failed to read captured audio clip: ${(err as Error).message}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        if (sink.failure) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `Audio capture failed: ${sink.failure}`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
+        const base64 = fileBuffer.toString("base64")
+        const capturedSeconds = pcmDurationSeconds(sink.pcmBytes)
+        const capturedText = `${capturedSeconds.toFixed(1)}s audio clip (${fileBuffer.length} bytes, ${sink.mimeType})`
+        const structured = {
+          status: hubStoppedEarly ? "truncated" : "captured",
+          durationSeconds: capturedSeconds,
+          sizeBytes: fileBuffer.length,
+          mimeType: sink.mimeType,
+          audioSource,
+          deviceMuted: deviceMuted(audioSource, audioDup),
+          sessionRestarted,
+          message: hubStoppedEarly
+            ? `Captured only a ${capturedText} of the ${effectiveDuration}s requested: the device audio stream ended early (device lost or scrcpy session stopped).`
+            : `Captured ${capturedText}.`,
+        }
+
+        return {
+          content: [
+            { type: "audio" as const, data: base64, mimeType: sink.mimeType },
+            { type: "text" as const, text: JSON.stringify(structured, null, 2) },
+          ],
+          structuredContent: structured,
+        }
+      } catch (error) {
+        const err = error as Error
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              status: "error",
+              message: `Failed to capture audio: ${err.message}`,
+            }, null, 2),
+          }],
+          isError: true as const,
+        }
+      } finally {
+        cleanupHubStop?.()
+        if (claimed) releaseAudioSink(claimed, "clip")
+        if (pendingSink) {
+          const leftover = pendingSink
+          leftover.end()
+          void leftover.closed
+            .then(() => fs.promises.unlink(leftover.outputPath))
+            .catch(() => {})
         }
       }
     }
