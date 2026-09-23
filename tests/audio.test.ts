@@ -34,6 +34,13 @@ import {
   classifyFfmpegExit,
   type ClipSink,
 } from "../src/utils/audio.js"
+import {
+  finaliseRecording,
+  getAvailableBytes,
+  recordingSinks,
+  PCM_BYTES_PER_SECOND,
+  type ActiveRecording,
+} from "../src/tools/audio.js"
 import { probeBinary } from "../src/utils/ffmpeg.js"
 
 describe("parseAudioHeader", () => {
@@ -494,5 +501,163 @@ describe("createClipSink", () => {
     const buf = await sink.collect()
     expect(buf.length).toBeGreaterThan(0)
     expect(fs.existsSync(sink.outputPath)).toBe(false)
+  })
+})
+
+describe("finaliseRecording", () => {
+  let socket: net.Socket
+
+  beforeEach(() => {
+    recordingSinks.clear()
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
+  })
+
+  afterEach(() => {
+    stopAudioHub("race-device")
+    stopAudioHub("hub-stop-device")
+    recordingSinks.clear()
+  })
+
+  function fakeRecordingSink(): RecordingSink {
+    return {
+      id: "recording",
+      outputPath: "/tmp/fake.wav",
+      format: "wav",
+      closed: Promise.resolve(),
+      get killed() { return false },
+      get pcmBytes() { return 0 },
+      get failure() { return null },
+      ready: Promise.resolve(),
+      write: () => {},
+      end: vi.fn(),
+    } as unknown as RecordingSink
+  }
+
+  it("finalises exactly once when user stop races the maxDuration timer", () => {
+    vi.useFakeTimers()
+    try {
+      const sink = fakeRecordingSink()
+      startAudioHub("race-device", socket)
+      attachAudioSink("race-device", sink)
+      const rec: ActiveRecording = {
+        sink,
+        timer: setTimeout(() => finaliseRecording("race-device", "maxDuration"), 100),
+        stoppedReason: "user",
+        finalised: false,
+      }
+      recordingSinks.set("race-device", rec)
+
+      finaliseRecording("race-device", "user")
+      vi.advanceTimersByTime(200)
+
+      expect(sink.end).toHaveBeenCalledTimes(1)
+      expect(rec.stoppedReason).toBe("user")
+      expect(rec.finalised).toBe(true)
+      expect(rec.timer).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("sets deviceLost when the hub stops", () => {
+    const sink = fakeRecordingSink()
+    startAudioHub("hub-stop-device", socket)
+    attachAudioSink("hub-stop-device", sink)
+    const rec: ActiveRecording = {
+      sink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: false,
+    }
+    recordingSinks.set("hub-stop-device", rec)
+
+    finaliseRecording("hub-stop-device", "deviceLost")
+
+    expect(rec.stoppedReason).toBe("deviceLost")
+    expect(rec.finalised).toBe(true)
+    expect(sink.end).toHaveBeenCalledOnce()
+  })
+})
+
+describe("getAvailableBytes", () => {
+  it("returns bavail × bsize from statfs", async () => {
+    vi.spyOn(fs.promises, "statfs").mockResolvedValue({
+      bavail: 100,
+      bsize: 4096,
+    } as fs.StatsFs)
+
+    const bytes = await getAvailableBytes("/some/dir")
+    expect(bytes).toBe(409600)
+  })
+
+  it("returns a large number when statfs fails", async () => {
+    vi.spyOn(fs.promises, "statfs").mockRejectedValue(new Error("ENOENT"))
+
+    const bytes = await getAvailableBytes("/nonexistent")
+    expect(bytes).toBe(Number.MAX_SAFE_INTEGER)
+  })
+})
+
+describe("recording size budget", () => {
+  it("budgets maxDuration × 192000 bytes", () => {
+    expect(PCM_BYTES_PER_SECOND).toBe(192000)
+    expect(300 * PCM_BYTES_PER_SECOND).toBe(57600000)
+  })
+})
+
+describe("onAudioHubStopped cleans up every sink type", () => {
+  let socket: net.Socket
+
+  beforeEach(() => {
+    socket = new EventEmitter() as unknown as net.Socket
+    socket.resume = vi.fn()
+    socket.off = socket.off.bind(socket)
+    socket.on = socket.on.bind(socket)
+  })
+
+  afterEach(() => {
+    stopAudioHub("sink-cleanup-device")
+    recordingSinks.clear()
+  })
+
+  it("finalises a recording sink with deviceLost", () => {
+    const ended: string[] = []
+    const sink = {
+      id: "recording",
+      write: () => {},
+      end: () => { ended.push("recording") },
+    }
+    const rec: ActiveRecording = {
+      sink: sink as unknown as RecordingSink,
+      timer: null,
+      stoppedReason: "user",
+      finalised: false,
+    }
+    recordingSinks.set("sink-cleanup-device", rec)
+
+    startAudioHub("sink-cleanup-device", socket)
+    attachAudioSink("sink-cleanup-device", sink)
+    stopAudioHub("sink-cleanup-device")
+
+    expect(ended).toContain("recording")
+    expect(rec.stoppedReason).toBe("deviceLost")
+    expect(rec.finalised).toBe(true)
+  })
+
+  it("ends playback and clip sinks via the hub", () => {
+    const ended: string[] = []
+    const playback = { id: "playback", write: () => {}, end: () => { ended.push("playback") } }
+    const clip = { id: "clip", write: () => {}, end: () => { ended.push("clip") } }
+
+    startAudioHub("sink-cleanup-device", socket)
+    attachAudioSink("sink-cleanup-device", playback)
+    attachAudioSink("sink-cleanup-device", clip)
+    stopAudioHub("sink-cleanup-device")
+
+    expect(ended).toContain("playback")
+    expect(ended).toContain("clip")
   })
 })

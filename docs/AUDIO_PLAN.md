@@ -906,12 +906,12 @@ the Decisions Log). Sections below stay in letter order for cross-referencing.
 - [x] F.3 Register in `src/index.ts`; verify coexistence with an active recording/playback sink
 - [x] F.4 Unit tests (clip math, fallback `mimeType`, temp-file cleanup) + integration test
 
-### Phase G — Robustness & Limits *(next)*
+### Phase G — Robustness & Limits
 
-- [ ] G.1 `maxDuration` (default 300 s), size budget, pre-flight free-space check, `stoppedReason`
-- [ ] G.2 Every sink handles `onAudioHubStopped`: finalise partials, no orphan processes
+- [x] G.1 `maxDuration` (default 300 s), size budget, pre-flight free-space check, `stoppedReason`
+- [x] G.2 Every sink handles `onAudioHubStopped`: finalise partials, no orphan processes
 - [ ] G.3 **Resolve R6** — real Android 11 device + audio-less emulator; retire R6 or build the separate-session fallback
-- [ ] G.4 Unit tests (timer/stop race, free-space refusal) + integration tests + manual check 5
+- [x] G.4 Unit tests (timer/stop race, free-space refusal) + integration tests + manual check 5
 
 ### Phase D — Frame Meta *(optional)*
 

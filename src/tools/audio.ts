@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import * as fs from "fs"
+import * as path from "path"
 import { createRequire } from "module"
 import { resolveSerial } from "../utils/adb.js"
 import {
@@ -34,16 +35,46 @@ import {
 import { probeBinary } from "../utils/ffmpeg.js"
 
 const playbackSinks = new Map<string, PlaybackSink>()
-const recordingSinks = new Map<string, RecordingSink>()
 const clipSinks = new Map<string, ClipSink>()
+
+export interface ActiveRecording {
+  sink: RecordingSink
+  timer: NodeJS.Timeout | null
+  stoppedReason: "user" | "maxDuration" | "deviceLost"
+  finalised: boolean
+}
+
+export const recordingSinks = new Map<string, ActiveRecording>()
+
+/**
+ * Finalise an active recording exactly once, whichever event arrives first:
+ * user stop, maxDuration timer, or device loss. The entry stays in
+ * recordingSinks so a late audio_record_stop can still report the outcome.
+ */
+export function finaliseRecording(
+  serial: string,
+  reason: "user" | "maxDuration" | "deviceLost"
+): boolean {
+  const rec = recordingSinks.get(serial)
+  if (!rec || rec.finalised) return false
+  rec.finalised = true
+  rec.stoppedReason = reason
+  if (rec.timer) {
+    clearTimeout(rec.timer)
+    rec.timer = null
+  }
+  detachAudioSink(serial, "recording")
+  return true
+}
 
 // stopAudioHub (via stop_session or an audio-session restart) ends every
 // attached sink; drop the tool-level entries with it so a later start tool
-// doesn't report "already active" over a dead sink.
+// doesn't report "already active" over a dead sink. For recordings, finalise
+// the partial file with a deviceLost reason rather than discarding it.
 onAudioHubStopped((serial) => {
   playbackSinks.delete(serial)
-  recordingSinks.delete(serial)
   clipSinks.delete(serial)
+  finaliseRecording(serial, "deviceLost")
 })
 
 /**
@@ -116,6 +147,18 @@ function deviceMuted(audioSource: AudioSourceName, audioDup: boolean): boolean {
   return audioSource === "output" || (audioSource === "playback" && !audioDup)
 }
 
+/** Bytes per second of raw PCM: 48000 Hz × 2 channels × 2 bytes/sample. */
+export const PCM_BYTES_PER_SECOND = 192000
+
+export async function getAvailableBytes(dir: string): Promise<number> {
+  try {
+    const stat = await fs.promises.statfs(dir)
+    return stat.bavail * stat.bsize
+  } catch {
+    return Number.MAX_SAFE_INTEGER
+  }
+}
+
 const audioSourceSchema = z.enum([
   "output",
   "playback",
@@ -134,11 +177,12 @@ export function registerAudioTools(server: McpServer): void {
   server.registerTool(
     "audio_record_start",
     {
-      description: "Start capturing device audio to a file on the host. Uses REMOTE_SUBMIX by default, which MUTES the device's own speakers while capturing. Use audioSource='playback' with audioDup=true (Android 13+) to keep the device audible. Requires Android 11+. Restarts the scrcpy session if it was started without audio. Unlike screen_record_* this writes to the host filesystem directly.",
+      description: "Start capturing device audio to a file on the host. Uses REMOTE_SUBMIX by default, which MUTES the device's own speakers while capturing. Use audioSource='playback' with audioDup=true (Android 13+) to keep the device audible. Requires Android 11+. Restarts the scrcpy session if it was started without audio. Recordings are automatically stopped after maxDuration seconds (default 300). Unlike screen_record_* this writes to the host filesystem directly.",
       inputSchema: {
         serial: z.string().optional().describe("Device serial number"),
         localPath: z.string().optional().describe("Host path for the recording (default ./scrcpy-mcp-audio-<timestamp>.wav)"),
         format: z.enum(["wav", "opus"]).optional().default("wav").describe("Recording format: wav (default) or opus"),
+        maxDuration: z.number().int().positive().max(3600).optional().default(300).describe("Maximum recording duration in seconds (default 300)"),
         audioSource: audioSourceSchema.describe("Audio source"),
         audioDup: z.boolean().optional().default(false).describe("Keep device playback audible when using playback source (Android 13+)"),
       },
@@ -146,6 +190,7 @@ export function registerAudioTools(server: McpServer): void {
         status: z.string().describe("Recording status"),
         localPath: z.string().describe("Host path the recording is being written to"),
         format: z.string().describe("Recording format"),
+        maxDuration: z.number().describe("Maximum recording duration in seconds"),
         deviceMuted: z.boolean().describe("Whether the device's own speakers are muted"),
         sessionRestarted: z.boolean().describe("Whether the scrcpy session was restarted to enable audio"),
         message: z.string().describe("Human-readable status message"),
@@ -158,7 +203,7 @@ export function registerAudioTools(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ serial, localPath, format, audioSource, audioDup }) => {
+    async ({ serial, localPath, format, maxDuration, audioSource, audioDup }) => {
       try {
         if (!probeBinary("ffmpeg")) {
           return {
@@ -191,7 +236,7 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
-        if (recordingSinks.has(s) || listAudioSinks(s).includes("recording")) {
+        if (listAudioSinks(s).includes("recording")) {
           return {
             content: [{
               type: "text" as const,
@@ -205,6 +250,22 @@ export function registerAudioTools(server: McpServer): void {
         }
 
         const outputPath = localPath ?? defaultRecordingPath(format)
+        const requiredBytes = maxDuration * PCM_BYTES_PER_SECOND
+        const outputDir = path.resolve(path.dirname(outputPath))
+        const availableBytes = await getAvailableBytes(outputDir)
+        if (availableBytes < requiredBytes) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: `Not enough free space for a ${maxDuration}s recording: need ${requiredBytes} bytes, only ${availableBytes} bytes available on the target volume.`,
+              }, null, 2),
+            }],
+            isError: true as const,
+          }
+        }
+
         const sink = createRecordingSink(s, outputPath, format)
         try {
           await sink.ready
@@ -234,15 +295,26 @@ export function registerAudioTools(server: McpServer): void {
             isError: true as const,
           }
         }
-        recordingSinks.set(s, sink)
+
+        const timer = setTimeout(() => {
+          finaliseRecording(s, "maxDuration")
+        }, maxDuration * 1000)
+
+        recordingSinks.set(s, {
+          sink,
+          timer,
+          stoppedReason: "user",
+          finalised: false,
+        })
 
         const structured = {
           status: "recording",
           localPath: outputPath,
           format,
+          maxDuration,
           deviceMuted: deviceMuted(audioSource, audioDup),
           sessionRestarted,
-          message: `Recording audio to ${outputPath} (${format}). Device speakers are ${deviceMuted(audioSource, audioDup) ? "muted" : "audible"}.`,
+          message: `Recording audio to ${outputPath} (${format}, max ${maxDuration}s). Device speakers are ${deviceMuted(audioSource, audioDup) ? "muted" : "audible"}.`,
         }
         return {
           content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }],
@@ -276,6 +348,7 @@ export function registerAudioTools(server: McpServer): void {
         localPath: z.string().describe("Host path of the recording"),
         sizeBytes: z.number().describe("Final file size in bytes"),
         durationSeconds: z.number().describe("Estimated duration in seconds"),
+        stoppedReason: z.enum(["user", "maxDuration", "deviceLost"]).describe("Why the recording stopped"),
         message: z.string().describe("Human-readable status message"),
       },
       annotations: {
@@ -289,8 +362,8 @@ export function registerAudioTools(server: McpServer): void {
     async ({ serial }) => {
       try {
         const s = await resolveSerial(serial)
-        const sink = recordingSinks.get(s)
-        if (!sink) {
+        const rec = recordingSinks.get(s)
+        if (!rec) {
           return {
             content: [{
               type: "text" as const,
@@ -303,10 +376,11 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
+        finaliseRecording(s, "user")
         recordingSinks.delete(s)
-        detachAudioSink(s, "recording")
-        await sink.closed
+        await rec.sink.closed
 
+        const sink = rec.sink
         let sizeBytes = 0
         let statError: string | null = null
         try {
@@ -339,13 +413,21 @@ export function registerAudioTools(server: McpServer): void {
         // reliable for both wav and opus, unlike the container size (which
         // for wav includes headers and for opus is a compressed bitstream).
         const durationSeconds = pcmDurationSeconds(sink.pcmBytes)
+        const stoppedReason = rec.stoppedReason
+
+        const reasonText = {
+          user: "",
+          maxDuration: " (stopped by maxDuration)",
+          deviceLost: " (stopped because the device was lost)",
+        }[stoppedReason]
 
         const structured = {
           status: "stopped",
           localPath: sink.outputPath,
           sizeBytes,
           durationSeconds,
-          message: `Recording saved to ${sink.outputPath} (${sizeBytes} bytes${sink.killed ? ", ffmpeg was force-killed" : ""}).`,
+          stoppedReason,
+          message: `Recording saved to ${sink.outputPath} (${sizeBytes} bytes${sink.killed ? ", ffmpeg was force-killed" : ""})${reasonText}.`,
         }
         return {
           content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }],
@@ -425,7 +507,7 @@ export function registerAudioTools(server: McpServer): void {
           }
         }
 
-        if (playbackSinks.has(s) || listAudioSinks(s).includes("playback")) {
+        if (listAudioSinks(s).includes("playback")) {
           return {
             content: [{
               type: "text" as const,

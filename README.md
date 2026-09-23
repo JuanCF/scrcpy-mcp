@@ -195,7 +195,7 @@ turn audio on.
 |------|-------------|
 | `start_audio_stream` | Stream device audio to the host's speakers via ffplay. Restarts the scrcpy session if it was started without audio. |
 | `stop_audio_stream` | Stop streaming audio to the host. |
-| `audio_record_start` | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. |
+| `audio_record_start` | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. Stops automatically after `maxDuration` seconds (default 300). |
 | `audio_record_stop` | Stop the recording and finalise the host-side file. |
 | `audio_capture` | Capture a bounded clip of device audio and return it as an audio content block. Restarts the scrcpy session if needed. |
 

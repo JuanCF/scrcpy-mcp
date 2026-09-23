@@ -293,7 +293,7 @@ Capture device audio on the host: stream to speakers or record to file. Full des
 - [ ] 6.2.4 Frame-meta support and compressed audio codecs (opus/aac/flac)
 - [ ] 6.2.5 Synced audio+video viewer
 - [x] 6.2.6 Implement `audio_capture` — a bounded clip returned to the agent as an MCP audio content block
-- [ ] 6.2.7 Capture limits (`maxDuration`, size budget, free-space check) and mid-capture device-loss handling
+- [x] 6.2.7 Capture limits (`maxDuration`, size budget, free-space check) and mid-capture device-loss handling
 
 **Use cases:**
 - Let an agent *hear* the device — 6.2.6 returns the audio inline, the way `screenshot` returns an image
