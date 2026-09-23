@@ -165,53 +165,41 @@ describe("audio tools", () => {
 
   it("keeps a playable partial recording when the device is lost mid-recording", async () => {
     if (skipped || !serial) return
+    // Device loss is simulated with adb disconnect/connect, which only works
+    // for a wireless (host:port) serial — disconnecting a USB serial drops it
+    // off ADB with no way to reconnect.
+    if (!serial.includes(":")) return
 
     await stopSessionOrFail()
 
-    let recordingStarted = false
     try {
       const recStart = await callTool("audio_record_start", { serial })
       expect(recStart.isError).toBeFalsy()
       const startData = recStart.structuredContent as { localPath: string }
-      recordingStarted = true
 
       await new Promise((resolve) => setTimeout(resolve, 1000))
 
-      // Simulate device loss by disconnecting ADB. This only works for
-      // wireless ADB; skip gracefully if the device is USB.
-      try {
-        await execAdb(["disconnect", serial])
-      } catch {
-        // USB devices cannot be adb-disconnected; stop the recording cleanly
-        // and mark the test as skipped.
-        await callTool("audio_record_stop", { serial })
-        recordingStarted = false
-        return
-      }
+      // Simulate device loss by disconnecting ADB.
+      await execAdb(["disconnect", serial])
 
       // Give the hub time to notice the socket is gone.
       await new Promise((resolve) => setTimeout(resolve, 2000))
 
-      // Reconnect so we can ask the tool for the result.
+      // Reconnect so the tool can resolve the device again. If this fails the
+      // assertions below report it; the partial file is on the host either way.
       try {
         await execAdb(["connect", serial])
       } catch {
-        // If reconnect fails we cannot retrieve the result; at least verify
-        // the partial file survived on disk.
+        // recStop will fail to resolve the device — that is a test failure.
       }
 
       const recStop = await callTool("audio_record_stop", { serial })
-      if (recStop.isError) {
-        // The partial file should still exist even if the stop call could not
-        // find an in-memory recording entry.
-        expect(fs.existsSync(startData.localPath)).toBe(true)
-      } else {
-        const stopData = recStop.structuredContent as { status: string; sizeBytes: number; stoppedReason: string }
-        expect(stopData.status).toBe("stopped")
-        expect(stopData.stoppedReason).toBe("deviceLost")
-        expect(stopData.sizeBytes).toBeGreaterThan(0)
-      }
-      recordingStarted = false
+      expect(recStop.isError).toBeFalsy()
+      const stopData = recStop.structuredContent as { status: string; sizeBytes: number; stoppedReason: string }
+      expect(stopData.status).toBe("stopped")
+      expect(stopData.stoppedReason).toBe("deviceLost")
+      expect(stopData.sizeBytes).toBeGreaterThan(0)
+      expect(fs.existsSync(startData.localPath)).toBe(true)
     } finally {
       await stopSessionOrFail()
     }

@@ -709,6 +709,9 @@ export function registerAudioTools(server: McpServer): void {
     async ({ serial, durationSeconds, audioSource: requestedSource, audioDup: requestedDup }) => {
       let cleanupHubStop: (() => void) | null = null
       let claimed: string | null = null
+      // Owns the clip sink's temp file until collect() takes over; any exit
+      // before then must end ffmpeg and delete the file it finalised.
+      let pendingSink: ClipSink | null = null
       try {
         if (!probeBinary("ffmpeg")) {
           return {
@@ -761,6 +764,7 @@ export function registerAudioTools(server: McpServer): void {
         }
 
         const sink = createClipSink(s)
+        pendingSink = sink
         try {
           await sink.ready
         } catch (err) {
@@ -823,6 +827,9 @@ export function registerAudioTools(server: McpServer): void {
 
         let fileBuffer: Buffer
         try {
+          // collect() deletes the temp file on every outcome, so it takes
+          // over ownership from here on.
+          pendingSink = null
           fileBuffer = await sink.collect()
         } catch (err) {
           return {
@@ -888,6 +895,13 @@ export function registerAudioTools(server: McpServer): void {
       } finally {
         cleanupHubStop?.()
         if (claimed) releaseAudioSink(claimed, "clip")
+        if (pendingSink) {
+          const leftover = pendingSink
+          leftover.end()
+          void leftover.closed
+            .then(() => fs.promises.unlink(leftover.outputPath))
+            .catch(() => {})
+        }
       }
     }
   )

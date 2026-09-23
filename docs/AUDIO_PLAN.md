@@ -752,9 +752,10 @@ capture nobody stops, and a device that disappears mid-capture.
   device-side enforces this (unlike `screen_record_*`, where the device does), so
   a host-side timer detaches the sink and finalises the file by exactly the path
   `audio_record_stop` uses.
-- A size budget of `maxDuration × 192 KB/s`, checked against free space on the
-  target volume **before** ffmpeg is spawned. Refuse up front, quoting both
-  numbers, rather than discovering it when the disk fills.
+- A size budget of `maxDuration` × the format's rate — 192 000 B/s for WAV,
+  12 000 B/s (96 kbps) for opus — checked against free space on the target
+  volume **before** ffmpeg is spawned. Refuse up front, quoting both numbers,
+  rather than discovering it when the disk fills.
 
 `audio_record_stop` gains `stoppedReason: "user" | "maxDuration" | "deviceLost"`.
 A stop that arrives after an auto-finalise returns the completed file rather than
@@ -774,11 +775,13 @@ the hub tears down. G makes every sink answer it:
   `stoppedReason: "deviceLost"`. Never discard bytes already captured.
 - **Playback:** close ffplay's stdin so it exits via `-autoexit` instead of
   lingering as an orphan.
-- **Clip (F):** resolve the pending capture with whatever was collected if that
-  is a usable length; error if it is not.
+- **Clip (F):** resolve the pending capture early with `status: "truncated"`
+  and whatever was collected; error only when the clip came out empty.
 
-`audio_record_stop` and `stop_audio_stream` then report the loss, instead of
-reporting on a sink that quietly died.
+`audio_record_stop` then reports the loss with `stoppedReason: "deviceLost"`.
+`stop_audio_stream` instead finds nothing to stop: the hub teardown already
+ended the sink, and the tool dropped its entry, so it answers "no audio stream
+is playing" rather than reporting on a sink that quietly died.
 
 ### G.3 Resolve R6 properly
 
@@ -911,7 +914,7 @@ the Decisions Log). Sections below stay in letter order for cross-referencing.
 - [x] G.1 `maxDuration` (default 300 s), size budget, pre-flight free-space check, `stoppedReason`
 - [x] G.2 Every sink handles `onAudioHubStopped`: finalise partials, no orphan processes
 - [ ] G.3 **Resolve R6** — real Android 11 device + audio-less emulator; retire R6 or build the separate-session fallback
-- [x] G.4 Unit tests (timer/stop race, free-space refusal) + integration tests + manual check 5
+- [ ] G.4 Unit tests (timer/stop race, free-space refusal) + integration tests + manual check 5 — unit tests and the recording/clip/`maxDuration` integration tests pass; the device-loss integration test still has to pass over wireless ADB (it now skips on USB serials)
 
 ### Phase D — Frame Meta *(optional)*
 

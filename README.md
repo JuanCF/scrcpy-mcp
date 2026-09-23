@@ -8,7 +8,7 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 
 ## Features
 
-- **41 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, video streaming, and audio streaming/recording
+- **44 tools** covering screenshots, input, apps, UI automation, shell, files, clipboard, video streaming, and audio streaming/recording
 - **scrcpy-first**: uses scrcpy's binary control protocol for 10-50x faster input and near-instant screenshots (~33ms)
 - **ADB fallback**: interaction tools work without scrcpy — slower but always available (the audio tools `start_audio_stream`/`audio_record_start` and the video stream require scrcpy)
 - **Image-returning screenshots**: the AI actually sees the screen, not just a file path
@@ -31,7 +31,7 @@ Connect any MCP-compatible AI assistant (Claude Code, OpenCode, Cursor, VS Code 
 | Requirement | Install | Benefit |
 |-------------|---------|---------|
 | **scrcpy** | [github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy/releases) | 10-50x faster input, ~33ms screenshots |
-| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy video stream decoding and audio recording |
+| **ffmpeg** | `apt install ffmpeg` / `brew install ffmpeg` | Required for scrcpy video stream decoding, audio recording, and audio clip capture |
 | **ffplay** | Usually packaged with ffmpeg | Required for audio playback and the MJPEG viewer window |
 
 ### Device setup
@@ -197,7 +197,7 @@ turn audio on.
 | `stop_audio_stream` | Stop streaming audio to the host. |
 | `audio_record_start` | Start recording device audio to `.wav` (default) or `.opus` on the host. Restarts the scrcpy session if needed. Stops automatically after `maxDuration` seconds (default 300). |
 | `audio_record_stop` | Stop the recording and finalise the host-side file. |
-| `audio_capture` | Capture a bounded clip of device audio and return it as an audio content block. Restarts the scrcpy session if needed. |
+| `audio_capture` | Capture a bounded clip of device audio and return it as an audio content block. Restarts the scrcpy session if needed. `durationSeconds` defaults to 5 (integer, max 30; a 5s default becomes 2.5s when ffmpeg has no libopus and the WAV fallback is used). `audioSource`/`audioDup` default to the running audio session's settings, so a clip can be taken during a recording or stream without interrupting it. |
 
 ### Device Management
 

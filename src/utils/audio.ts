@@ -278,15 +278,27 @@ export function classifyFfmpegExit(
   return code !== null && code !== 0 ? `ffmpeg exited with code ${code}` : null
 }
 
-export function createRecordingSink(
-  serial: string,
-  outputPath: string,
-  format: "wav" | "opus" = "wav"
-): RecordingSink {
-  const encoderArgs = format === "opus"
-    ? ["-c:a", "libopus", "-b:a", "96k"]
-    : ["-c:a", "pcm_s16le"]
+interface EncoderSink extends AudioSink {
+  outputPath: string
+  closed: Promise<void>
+  killed: boolean
+  pcmBytes: number
+  ready: Promise<void>
+  failure: string | null
+}
 
+/**
+ * Shared ffmpeg encoder process behind the recording and clip sinks: spawns
+ * ffmpeg reading raw PCM from stdin, tracks readiness and closure, classifies
+ * exits, and handles stdin EPIPE and backpressure. end() gives ffmpeg up to
+ * 2 s to finalise the container, then force-kills.
+ */
+function createEncoderSink(
+  serial: string,
+  id: string,
+  outputPath: string,
+  encoderArgs: string[]
+): EncoderSink {
   const proc = spawn(findFfmpeg(), [
     "-hide_banner",
     "-loglevel", "error",
@@ -317,8 +329,8 @@ export function createRecordingSink(
   }
 
   // A failed spawn emits "error" and may never emit "exit"; settle closed so
-  // audio_record_stop cannot hang waiting on a process that never ran, and
-  // let ready reject so the start tool reports the failure.
+  // a stop call cannot hang waiting on a process that never ran, and let
+  // ready reject so the start tool reports the failure.
   const ready = new Promise<void>((resolve, reject) => {
     proc.once("spawn", () => resolve())
     proc.once("error", reject)
@@ -361,9 +373,8 @@ export function createRecordingSink(
   }
 
   return {
-    id: "recording",
+    id,
     outputPath,
-    format,
     get killed() { return killed },
     get pcmBytes() { return pcmBytes },
     get failure() { return failure },
@@ -400,6 +411,17 @@ export function createRecordingSink(
   }
 }
 
+export function createRecordingSink(
+  serial: string,
+  outputPath: string,
+  format: "wav" | "opus" = "wav"
+): RecordingSink {
+  const encoderArgs = format === "opus"
+    ? ["-c:a", "libopus", "-b:a", "96k"]
+    : ["-c:a", "pcm_s16le"]
+  return Object.assign(createEncoderSink(serial, "recording", outputPath, encoderArgs), { format })
+}
+
 export interface ClipSink extends AudioSink {
   outputPath: string
   mimeType: "audio/ogg" | "audio/wav"
@@ -416,28 +438,38 @@ export interface ClipSink extends AudioSink {
   collect(): Promise<Buffer>
 }
 
+const libopusCache = new Map<string, boolean>()
+
 /**
  * Probe whether the resolved ffmpeg binary includes the libopus encoder. Used
- * by createClipSink because opus-in-ogg is its default path (D9).
+ * by createClipSink because opus-in-ogg is its default path (D9). The probe
+ * blocks the event loop for as long as `ffmpeg -encoders` takes, and a
+ * resolved binary's encoder list does not change at runtime, so the result
+ * is cached per resolved path.
  */
 export function ffmpegHasLibopus(): boolean {
   const ffmpegPath = probeBinary("ffmpeg")
   if (!ffmpegPath) return false
+  const cached = libopusCache.get(ffmpegPath)
+  if (cached !== undefined) return cached
+  let result: boolean
   try {
     const output = execFileSync(ffmpegPath, ["-encoders"], {
       encoding: "utf8",
       timeout: 5000,
     })
-    return output.includes("libopus")
+    result = output.includes("libopus")
   } catch {
-    return false
+    result = false
   }
+  libopusCache.set(ffmpegPath, result)
+  return result
 }
 
 export function createClipSink(serial: string, forceFormat?: "ogg" | "wav"): ClipSink {
   const hasLibopus = forceFormat === undefined ? ffmpegHasLibopus() : forceFormat === "ogg"
   const format: "ogg" | "wav" = hasLibopus ? "ogg" : "wav"
-  const mimeType = format === "ogg" ? "audio/ogg" : "audio/wav"
+  const mimeType: "audio/ogg" | "audio/wav" = format === "ogg" ? "audio/ogg" : "audio/wav"
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
   const outputPath = path.join(os.tmpdir(), `scrcpy-mcp-audio-clip-${serial}-${timestamp}.${format}`)
 
@@ -445,112 +477,12 @@ export function createClipSink(serial: string, forceFormat?: "ogg" | "wav"): Cli
     ? ["-c:a", "libopus", "-b:a", "48k"]
     : ["-c:a", "pcm_s16le"]
 
-  const proc = spawn(findFfmpeg(), [
-    "-hide_banner",
-    "-loglevel", "error",
-    "-nostats",
-    "-f", AUDIO_SAMPLE_FORMAT,
-    "-ar", String(AUDIO_SAMPLE_RATE),
-    "-ac", String(AUDIO_CHANNELS),
-    "-i", "pipe:0",
-    ...encoderArgs,
-    "-y", outputPath,
-  ])
-
-  let resolveClosed: (() => void) | null = null
-  const closed = new Promise<void>((resolve) => {
-    resolveClosed = resolve
-  })
-
-  let finalised = false
-  let killed = false
-  let pcmBytes = 0
-  let failure: string | null = null
-
-  const settleClosed = () => {
-    if (!finalised) {
-      finalised = true
-      resolveClosed?.()
-    }
-  }
-
-  const ready = new Promise<void>((resolve, reject) => {
-    proc.once("spawn", () => resolve())
-    proc.once("error", reject)
-  })
-  proc.on("error", (err) => {
-    console.error(`[audio] ffmpeg process error for ${serial}:`, err.message)
-    failure ??= `ffmpeg process error: ${err.message}`
-    settleClosed()
-  })
-
-  proc.stderr?.on("data", (data: Buffer) => {
-    console.error(`[audio] ffmpeg stderr for ${serial}:`, data.toString().trim())
-  })
-
-  proc.on("exit", (code, signal) => {
-    const reason = classifyFfmpegExit(code, signal, killed)
-    if (reason) {
-      console.error(`[audio] ${reason} for ${serial}`)
-      failure ??= reason
-    }
-    settleClosed()
-  })
-
-  const stdin = proc.stdin
-  let backpressured = false
-  if (stdin) {
-    stdin.on("drain", () => {
-      backpressured = false
-    })
-    stdin.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EPIPE") {
-        console.error(`[audio] ffmpeg stdin EPIPE for ${serial}`)
-      } else {
-        console.error(`[audio] ffmpeg stdin error for ${serial}:`, err.message)
-      }
-    })
-  }
-
-  return {
-    id: "clip",
-    outputPath,
+  const sink = createEncoderSink(serial, "clip", outputPath, encoderArgs)
+  return Object.assign(sink, {
     mimeType,
     format,
-    get killed() { return killed },
-    get pcmBytes() { return pcmBytes },
-    get failure() { return failure },
-    closed,
-    ready,
-    write: (chunk: Buffer) => {
-      if (backpressured) return
-      if (stdin && !stdin.destroyed) {
-        try {
-          pcmBytes += chunk.length
-          if (!stdin.write(chunk)) {
-            backpressured = true
-            console.error(`[audio] ffmpeg stdin backpressured for ${serial}; dropping audio until drain`)
-          }
-        } catch { /* EPIPE handled above */ }
-      }
-    },
-    end: () => {
-      if (finalised) return
-      if (stdin && !stdin.destroyed) {
-        stdin.end()
-      }
-      const killTimer = setTimeout(() => {
-        if (!finalised && proc && !proc.killed) {
-          killed = true
-          proc.kill("SIGKILL")
-        }
-      }, 2000)
-      proc.on("exit", () => {
-        clearTimeout(killTimer)
-      })
-    },
-    collect: async () => {
-      await closed
+    collect: async (): Promise<Buffer> => {
+      await sink.closed
       let buf: Buffer
       try {
         buf = await fs.promises.readFile(outputPath)
@@ -564,7 +496,7 @@ export function createClipSink(serial: string, forceFormat?: "ogg" | "wav"): Cli
       }
       return buf
     },
-  }
+  })
 }
 
 export function pcmDurationSeconds(pcmBytes: number): number {

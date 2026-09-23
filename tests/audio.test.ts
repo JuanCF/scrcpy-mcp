@@ -32,7 +32,6 @@ import {
   createClipSink,
   ffmpegHasLibopus,
   classifyFfmpegExit,
-  type ClipSink,
 } from "../src/utils/audio.js"
 import {
   finaliseRecording,
@@ -433,7 +432,7 @@ describe("createRecordingSink failure reporting", () => {
 describe("createClipSink", () => {
   const hasFfmpeg = probeBinary("ffmpeg") !== null
 
-  it("places the temp file under os.tmpdir()", () => {
+  it("places the temp file under os.tmpdir()", async () => {
     if (!hasFfmpeg) return
 
     const sink = createClipSink("test-serial", "wav")
@@ -441,9 +440,11 @@ describe("createClipSink", () => {
     expect(sink.mimeType).toBe("audio/wav")
     // No data was written; just end so the process exits and we can clean up.
     sink.end()
+    await sink.closed
+    await sink.collect().catch(() => {})
   })
 
-  it("defaults to opus/ogg when libopus is available", () => {
+  it("defaults to opus/ogg when libopus is available", async () => {
     if (!hasFfmpeg) return
     if (!ffmpegHasLibopus()) return
 
@@ -451,15 +452,19 @@ describe("createClipSink", () => {
     expect(sink.mimeType).toBe("audio/ogg")
     expect(sink.format).toBe("ogg")
     sink.end()
+    await sink.closed
+    await sink.collect().catch(() => {})
   })
 
-  it("falls back to wav and reports the matching mimeType", () => {
+  it("falls back to wav and reports the matching mimeType", async () => {
     if (!hasFfmpeg) return
 
     const sink = createClipSink("test-serial", "wav")
     expect(sink.mimeType).toBe("audio/wav")
     expect(sink.format).toBe("wav")
     sink.end()
+    await sink.closed
+    await sink.collect().catch(() => {})
   })
 
   it("collect() reads and deletes the temp file on success", async () => {

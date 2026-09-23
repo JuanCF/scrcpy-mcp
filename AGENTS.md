@@ -57,7 +57,7 @@ src/
 ├── index.ts           # Entry point, server setup, tool registration
 ├── utils/
 │   ├── adb.ts         # ADB utility functions (exec, device detection, etc.)
-│   ├── audio.ts       # Audio hub, playback sink, recording sink
+│   ├── audio.ts       # Audio hub, playback sink, recording/clip encoder sinks
 │   ├── ffmpeg.ts      # ffmpeg/ffplay binary resolution
 │   ├── scrcpy.ts      # scrcpy session lifecycle, control protocol, video decode
 │   ├── mjpeg.ts       # HTTP MJPEG server and ffplay viewer launcher
