@@ -59,6 +59,7 @@ src/
 │   ├── adb.ts         # ADB utility functions (exec, device detection, etc.)
 │   ├── audio.ts       # Audio hub, playback sink, recording/clip encoder sinks
 │   ├── ffmpeg.ts      # ffmpeg/ffplay binary resolution
+│   ├── h264.ts        # H.264 SPS parsing (frame size changes on rotation)
 │   ├── scrcpy.ts      # scrcpy session lifecycle, control protocol, video decode
 │   ├── mjpeg.ts       # HTTP MJPEG server and ffplay viewer launcher
 │   └── constants.ts   # Shared constants (protocol types, env vars, keycodes)
