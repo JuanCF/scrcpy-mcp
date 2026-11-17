@@ -19,7 +19,7 @@ export function registerVideoTools(server: McpServer): void {
         screenSize: z.object({
           width: z.number().int().describe("Native display width"),
           height: z.number().int().describe("Native display height"),
-        }).describe("Native display resolution — tap/swipe use these native coordinates (no scaling)"),
+        }).describe("Native display resolution in the device's current orientation (width and height swap when it rotates) — tap/swipe use these native coordinates (no scaling)"),
         viewer: z.string().describe("Viewer status message"),
       },
       annotations: {

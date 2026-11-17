@@ -5,6 +5,7 @@ import { StringDecoder } from "string_decoder"
 import * as fs from "fs"
 import { execAdb, execAdbShell, resolveSerial, getScreenSize } from "./adb.js"
 import { findFfmpeg } from "./ffmpeg.js"
+import { createSpsScanner, FrameSize } from "./h264.js"
 import {
   ADB_PATH,
   SCRCPY_SERVER_PORT,
@@ -308,14 +309,17 @@ export interface ScrcpySession {
   audioSocket: net.Socket | null
   videoProcess: ChildProcess | null
   frameBuffer: Buffer | null
-  // Native device resolution (from `wm size`). This is the coordinate space
-  // callers use — it matches ui_dump / ui_find_element bounds and `input tap`.
-  screenSize: { width: number; height: number }
-  // The scrcpy encoder/video frame size (downscaled by max_size). The scrcpy
-  // touch protocol requires the touch message's screenSize to EXACTLY equal
-  // this; otherwise the server's PositionMapper silently discards the event.
-  // Input helpers scale native coords into this space before sending.
-  frameSize: { width: number; height: number }
+  // Native device resolution in the display's current orientation (the
+  // `wm size` pair, swapped while the device is rotated). This is the
+  // coordinate space callers use — it matches ui_dump / ui_find_element bounds
+  // and `input tap`.
+  screenSize: FrameSize
+  // The scrcpy encoder/video frame size (downscaled by max_size), which
+  // follows the device's rotation. The scrcpy touch protocol requires the
+  // touch message's screenSize to EXACTLY equal this; otherwise the server's
+  // PositionMapper silently discards the event. Input helpers scale native
+  // coords into this space before sending.
+  frameSize: FrameSize
   // False when the scrcpy video stream could not be established (e.g. the
   // device/emulator has no usable h264 encoder, so device metadata never
   // arrived). The session is still usable for control (input/clipboard/etc.)
@@ -344,6 +348,44 @@ export function hasActiveSession(serial: string): boolean {
 export function getLatestFrame(serial: string): Buffer | null {
   const session = sessions.get(serial)
   return session?.frameBuffer ?? null
+}
+
+// `wm size` reports the display in its natural orientation whatever the current
+// rotation, while the video frame follows the rotation. max_size preserves the
+// aspect ratio, so the frame's orientation says which way round the native
+// size currently is. Exported for tests.
+export function orientToFrame(native: FrameSize, frame: FrameSize): FrameSize {
+  const nativeIsLandscape = native.width > native.height
+  const frameIsLandscape = frame.width > frame.height
+  if (nativeIsLandscape === frameIsLandscape) return native
+  return { width: native.height, height: native.width }
+}
+
+// The server restarts its encoder at a new size when the device rotates, and
+// from then on drops every touch that still carries the old frame size. With
+// send_frame_meta=false the only sign of this in the stream is the new SPS
+// (scrcpy 3.x sends nothing else; the session packet 4.x adds cannot be framed
+// in a raw stream). The first SPS only sets the baseline: the size in the
+// stream header is what the server maps against, so it stays authoritative
+// until the stream actually changes. Exported for tests.
+export function trackFrameSize(
+  session: Pick<ScrcpySession, "serial" | "screenSize" | "frameSize">
+): (chunk: Buffer) => void {
+  let streamSize: FrameSize | null = null
+
+  return createSpsScanner((size) => {
+    const changed = streamSize !== null &&
+      (streamSize.width !== size.width || streamSize.height !== size.height)
+    streamSize = size
+    if (!changed) return
+
+    session.frameSize = size
+    session.screenSize = orientToFrame(session.screenSize, size)
+    console.error(
+      `[scrcpy] [${session.serial}] Frame size changed to ${size.width}x${size.height}, ` +
+        `native size ${session.screenSize.width}x${session.screenSize.height}`
+    )
+  })
 }
 
 function startVideoStream(
@@ -494,6 +536,10 @@ function startVideoStream(
     session.videoSocket = null
   })
 
+  // Runs on every chunk whether or not ffmpeg is alive: input keeps working
+  // without a decoder, and it needs the current frame size to do so.
+  const scanFrameSize = trackFrameSize(session)
+
   if (ffmpeg.stdin) {
     ffmpeg.stdin.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EPIPE") {
@@ -508,9 +554,11 @@ function startVideoStream(
     // when open, runs its own independent server and does not read from here.)
     // Write any overflow bytes captured during the metadata read first.
     if (initialData && initialData.length > 0) {
+      scanFrameSize(initialData)
       ffmpeg.stdin.write(initialData)
     }
     videoSocket.on("data", (chunk: Buffer) => {
+      scanFrameSize(chunk)
       if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
         try { ffmpeg.stdin.write(chunk) } catch { /* EPIPE handled above */ }
       }
@@ -521,6 +569,10 @@ function startVideoStream(
   } else {
     // No stdin to feed: still drain the socket so the server isn't blocked by
     // TCP backpressure, which would take the control socket down with it.
+    if (initialData && initialData.length > 0) {
+      scanFrameSize(initialData)
+    }
+    videoSocket.on("data", scanFrameSize)
     videoSocket.resume()
   }
 
@@ -1775,6 +1827,11 @@ export async function startSession(
     if (!nativeSize) {
       nativeSize = videoAvailable ? frameSize : { width: 0, height: 0 }
     }
+
+    // `wm size` is in the display's natural orientation, the frame in its
+    // current one. Without this a session started in landscape would scale x
+    // and y by different factors and send touches to the wrong place.
+    nativeSize = orientToFrame(nativeSize, frameSize)
 
     // The scrcpy touch protocol requires the touch message's screenSize to
     // EXACTLY equal the video frame size; a mismatch makes the server's

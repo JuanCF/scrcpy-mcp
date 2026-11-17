@@ -600,7 +600,8 @@ start_session():
        max_size=1024 max_fps=30
   5. Connect to the forwarded TCP port from Node.js
   6. Receive device metadata (device name, encoder frame size)
-  7. Query native display resolution via `wm size` (for coordinate system)
+  7. Query native display resolution via `wm size` (for coordinate system) and orient it
+     to match the frame, since `wm size` ignores the current rotation
   8. Split connection into: video socket + control socket
   9. Start ffmpeg process to decode H.264 video stream → JPEG frame buffer
   10. Store session in a Map<serial, ScrcpySession>
@@ -623,8 +624,8 @@ interface ScrcpySession {
   videoSocket: net.Socket | null;  // TCP socket receiving H.264 video
   videoProcess: ChildProcess | null; // ffmpeg decoding H.264 → JPEG frames
   frameBuffer: Buffer | null;      // Latest decoded JPEG frame (for screenshots)
-  screenSize: { width: number; height: number };  // NATIVE display resolution (from wm size)
-  frameSize: { width: number; height: number };   // Downscaled encoder frame size
+  screenSize: { width: number; height: number };  // NATIVE display resolution (from wm size), in the current orientation
+  frameSize: { width: number; height: number };   // Downscaled encoder frame size; follows rotation (tracked from the H.264 SPS)
   clipboardContent: string | null; // Cached clipboard value from device
   viewerProcess: ChildProcess | null; // ffplay MJPEG viewer window, if open
 }

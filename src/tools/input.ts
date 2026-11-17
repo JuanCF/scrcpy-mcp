@@ -105,7 +105,8 @@ function sendTouchEvent(
 // and `input tap`). The scrcpy touch protocol, however, requires the message's
 // screenSize to exactly equal the downscaled video frame size, or the server
 // silently drops the event. So scale native coords into frame space. max_size
-// preserves aspect ratio, so the x and y factors are equal.
+// preserves aspect ratio and session.screenSize is kept in the frame's
+// orientation, so the x and y factors are equal.
 function nativeToFrame(
   serial: string,
   x: number,
