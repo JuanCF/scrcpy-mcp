@@ -75,6 +75,22 @@ describe("trackFrameSize", () => {
     expect(session.frameSize).toEqual({ width: 648, height: 1024 })
   })
 
+  it("adopts a first SPS turned the other way from the stream header", () => {
+    // scrcpy 3.x writes the header once; a rotation before the first encoded
+    // frame leaves it stale, and the server already maps against the new size.
+    const session = portraitSession()
+    const feed = trackFrameSize(session)
+    feed(LANDSCAPE_CONFIG)
+    expect(session.frameSize).toEqual({ width: 1024, height: 640 })
+    expect(session.screenSize).toEqual({ width: 2560, height: 1600 })
+
+    feed(LANDSCAPE_CONFIG)
+    expect(session.frameSize).toEqual({ width: 1024, height: 640 })
+    feed(PORTRAIT_CONFIG)
+    expect(session.frameSize).toEqual({ width: 640, height: 1024 })
+    expect(session.screenSize).toEqual({ width: 1600, height: 2560 })
+  })
+
   it("follows a rotation to landscape and back", () => {
     const session = portraitSession()
     const feed = trackFrameSize(session)

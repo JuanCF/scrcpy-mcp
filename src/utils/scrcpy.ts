@@ -312,7 +312,8 @@ export interface ScrcpySession {
   // Native device resolution in the display's current orientation (the
   // `wm size` pair, swapped while the device is rotated). This is the
   // coordinate space callers use — it matches ui_dump / ui_find_element bounds
-  // and `input tap`.
+  // and `input tap`. The orientation comes from the video frame, so a session
+  // without video keeps the natural-orientation size.
   screenSize: FrameSize
   // The scrcpy encoder/video frame size (downscaled by max_size), which
   // follows the device's rotation. The scrcpy touch protocol requires the
@@ -355,27 +356,34 @@ export function getLatestFrame(serial: string): Buffer | null {
 // aspect ratio, so the frame's orientation says which way round the native
 // size currently is. Exported for tests.
 export function orientToFrame(native: FrameSize, frame: FrameSize): FrameSize {
-  const nativeIsLandscape = native.width > native.height
-  const frameIsLandscape = frame.width > frame.height
-  if (nativeIsLandscape === frameIsLandscape) return native
+  if (isLandscape(native) === isLandscape(frame)) return native
   return { width: native.height, height: native.width }
+}
+
+function isLandscape(size: FrameSize): boolean {
+  return size.width > size.height
 }
 
 // The server restarts its encoder at a new size when the device rotates, and
 // from then on drops every touch that still carries the old frame size. With
 // send_frame_meta=false the only sign of this in the stream is the new SPS
 // (scrcpy 3.x sends nothing else; the session packet 4.x adds cannot be framed
-// in a raw stream). The first SPS only sets the baseline: the size in the
-// stream header is what the server maps against, so it stays authoritative
-// until the stream actually changes. Exported for tests.
+// in a raw stream). The first SPS normally only sets the baseline: the size in
+// the stream header is what the server maps against, so it stays authoritative
+// until the stream actually changes. The exception is a first SPS turned the
+// other way from the header. scrcpy 3.x writes its header once, so a rotation
+// between the header and the first encoded frame leaves the header stale, and
+// the SPS is then the only record of the size the server really uses.
+// Exported for tests.
 export function trackFrameSize(
   session: Pick<ScrcpySession, "serial" | "screenSize" | "frameSize">
 ): (chunk: Buffer) => void {
   let streamSize: FrameSize | null = null
 
   return createSpsScanner((size) => {
-    const changed = streamSize !== null &&
-      (streamSize.width !== size.width || streamSize.height !== size.height)
+    const changed = streamSize === null
+      ? isLandscape(size) !== isLandscape(session.frameSize)
+      : streamSize.width !== size.width || streamSize.height !== size.height
     streamSize = size
     if (!changed) return
 

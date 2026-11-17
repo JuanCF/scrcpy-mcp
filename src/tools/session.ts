@@ -30,7 +30,7 @@ export function registerSessionTools(server: McpServer): void {
         screenSize: z.object({
           width: z.number().int().describe("Native display width"),
           height: z.number().int().describe("Native display height"),
-        }).describe("Native display resolution in the device's current orientation (width and height swap when it rotates) — tap/swipe use these native coordinates, matching ui_dump / ui_find_element bounds directly (no scaling)"),
+        }).describe("Native display resolution in the device's current orientation (width and height swap when it rotates; when videoAvailable is false the rotation cannot be detected and this stays the natural-orientation size) — tap/swipe use these native coordinates, matching ui_dump / ui_find_element bounds directly (no scaling)"),
         videoAvailable: z.boolean().describe("Whether the scrcpy video stream is up. When false, the session still works for input/clipboard but screenshots fall back to adb screencap."),
         audioAvailable: z.boolean().describe("Whether audio capture is active. When false, audio was unavailable (Android < 11 or capture failure)."),
         message: z.string().describe("Human-readable status message"),
