@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createRequire } from "module"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerSessionTools } from "./tools/session.js"
@@ -14,10 +15,12 @@ import { registerFileTools } from "./tools/files.js"
 import { registerVideoTools } from "./tools/video.js"
 import { registerAudioTools } from "./tools/audio.js"
 
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string }
+
 function createServer() {
   const server = new McpServer({
     name: "scrcpy-mcp",
-    version: process.env.npm_package_version ?? "0.0.0",
+    version,
   })
 
   registerSessionTools(server)
