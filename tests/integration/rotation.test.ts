@@ -14,10 +14,25 @@ import { connectClient, disconnectClient, callTool, parseResult, stopSessionOrFa
 const SETTINGS_PACKAGE = "com.android.settings"
 const ROTATION_SETTLE_MS = 8000
 const PAGE_SETTLE_MS = 5000
+const ROW_SETTLE_MS = 15000
+
+// Settings stacks cards above its list — a suggestion, for one, which Android 11
+// starts showing only once the device is a few days old. A card's title carries
+// the same resource id as a row's, but the page it opens does not repeat that
+// title, so a card is no use as a tap target. These are the containers the
+// cards sit in; which of them survive a compressed dump varies, hence several.
+const SETTINGS_CARD_AREA = /<node\b[^>]*\bresource-id="com\.android\.settings:id\/(?:suggestion_card|card_container|contextual_cards_content)"[^>]*\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g
 
 interface Size {
   width: number
   height: number
+}
+
+interface Rect {
+  left: number
+  top: number
+  right: number
+  bottom: number
 }
 
 interface SessionInfo {
@@ -27,9 +42,16 @@ interface SessionInfo {
   videoAvailable: boolean
 }
 
+interface Row {
+  text: string
+  bounds: string
+  tapX: number
+  tapY: number
+}
+
 interface FoundElements {
   count: number
-  elements: Array<{ text: string; tapX: number; tapY: number }>
+  elements: Row[]
 }
 
 function sleep(ms: number): Promise<void> {
@@ -82,18 +104,80 @@ async function foregroundActivity(): Promise<string> {
   return `${current.packageName}/${current.activity}`
 }
 
-async function settingsRows(): Promise<FoundElements["elements"]> {
+/** Every titled entry on the Settings home page, cards included. */
+async function settingsTitles(): Promise<Row[]> {
   const found = parseResult(
     await callTool("ui_find_element", { resourceId: "android:id/title" })
   ) as FoundElements
   return found.elements.filter((element) => element.text.length > 0)
 }
 
+async function settingsCardAreas(): Promise<Rect[]> {
+  const xml = String(parseResult(await callTool("ui_dump")))
+  return [...xml.matchAll(SETTINGS_CARD_AREA)].map((match) => {
+    const [left, top, right, bottom] = match.slice(1).map(Number)
+    return { left, top, right, bottom }
+  })
+}
+
+/** The rows of the Settings list itself, leaving out any card above it. */
+async function settingsRows(): Promise<Row[]> {
+  // Cards first: one arriving between the two reads then shows up as a row,
+  // which the next read corrects, instead of hiding the rows it displaced.
+  const cards = await settingsCardAreas()
+  const titles = await settingsTitles()
+  const onCard = (row: Row): boolean =>
+    cards.some(
+      (card) =>
+        row.tapX >= card.left &&
+        row.tapX <= card.right &&
+        row.tapY >= card.top &&
+        row.tapY <= card.bottom
+    )
+  return titles.filter((row) => !onCard(row))
+}
+
+/**
+ * Drag the Settings home page up. Sent through adb rather than the session so
+ * that reaching a row does not depend on the touch mapping under test.
+ */
+async function scrollSettingsHome(): Promise<void> {
+  const info = parseResult(await callTool("device_info")) as {
+    screenWidth: number
+    screenHeight: number
+  }
+  // Kept within the short side so the same drag fits either orientation.
+  const side = Math.min(info.screenWidth, info.screenHeight)
+  const x = Math.round(side / 2)
+  await shell(`input swipe ${x} ${Math.round(side * 0.8)} ${x} ${Math.round(side * 0.3)} 500`)
+}
+
+/**
+ * The first row of the Settings list, once two reads running find it in the
+ * same place. The cards load after the list and push it down when they arrive,
+ * so a row read too early would be tapped where it no longer is. On a short
+ * landscape display a card can also fill the screen, hence the scroll.
+ */
+async function firstSettingsRow(): Promise<Row> {
+  let previous: Row | undefined
+  return waitFor("a Settings row that has stopped moving", ROW_SETTLE_MS, async () => {
+    const [row] = await settingsRows()
+    if (!row) {
+      previous = undefined
+      await scrollSettingsHome()
+      return undefined
+    }
+    const settled = previous?.text === row.text && previous.bounds === row.bounds
+    previous = row
+    return settled ? row : undefined
+  })
+}
+
 /** Force-stop and relaunch Settings so every case starts from its home page. */
 async function openSettingsHome(): Promise<string> {
   await callTool("app_start", { packageName: `+${SETTINGS_PACKAGE}` })
   await waitFor("the Settings home page", PAGE_SETTLE_MS, async () =>
-    (await settingsRows()).length > 0 ? true : undefined
+    (await settingsTitles()).length > 0 ? true : undefined
   )
   return foregroundActivity()
 }
@@ -104,18 +188,23 @@ async function openSettingsHome(): Promise<string> {
  */
 async function expectTapOpensFirstRow(): Promise<void> {
   const homeActivity = await openSettingsHome()
-  const [row] = await settingsRows()
-  expect(row, "Settings home page shows no rows to tap").toBeDefined()
+  const row = await firstSettingsRow()
 
   const tapped = await callTool("tap", { x: row.tapX, y: row.tapY })
   expect(tapped.isError, `tap failed: ${JSON.stringify(tapped.content)}`).toBeFalsy()
 
   const target = `"${row.text}" at (${row.tapX}, ${row.tapY})`
-  await waitFor(`the tap on ${target} to leave the Settings home page`, PAGE_SETTLE_MS, async () =>
-    (await foregroundActivity()) !== homeActivity ? true : undefined
+  const opened = await waitFor(
+    `the tap on ${target} to leave the Settings home page`,
+    PAGE_SETTLE_MS,
+    async () => {
+      const activity = await foregroundActivity()
+      return activity !== homeActivity ? activity : undefined
+    }
   )
   const title = parseResult(await callTool("ui_find_element", { text: row.text })) as FoundElements
-  expect(title.count, `tap on ${target} opened a different page`).toBeGreaterThan(0)
+  expect(title.count, `tap on ${target} opened ${opened}, which does not show that title`)
+    .toBeGreaterThan(0)
 }
 
 describe("Touch mapping across rotation", () => {
